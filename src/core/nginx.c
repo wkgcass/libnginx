@@ -214,7 +214,12 @@ static char **ngx_os_environ;
 
 
 int ngx_cdecl
-main(int argc, char *const *argv)
+#if (NGX_AS_LIB)
+ngx_lib_main
+#else
+main
+#endif
+(int argc, char *const *argv)
 {
     ngx_buf_t        *b;
     ngx_log_t        *log;
@@ -367,11 +372,13 @@ main(int argc, char *const *argv)
     }
 
     if (!ngx_inherited && ccf->daemon) {
+#if (!NGX_AS_LIB)
         if (ngx_daemon(cycle->log) != NGX_OK) {
             return 1;
         }
 
         ngx_daemonized = 1;
+#endif
     }
 
     if (ngx_inherited) {
@@ -380,6 +387,7 @@ main(int argc, char *const *argv)
 
 #endif
 
+#if (!NGX_AS_LIB)
     if (ngx_create_pidfile(&ccf->pid, cycle->log) != NGX_OK) {
         return 1;
     }
@@ -387,6 +395,7 @@ main(int argc, char *const *argv)
     if (ngx_log_redirect_stderr(cycle) != NGX_OK) {
         return 1;
     }
+#endif
 
     if (log->file->fd != ngx_stderr) {
         if (ngx_close_file(log->file->fd) == NGX_FILE_ERROR) {
@@ -397,13 +406,15 @@ main(int argc, char *const *argv)
 
     ngx_use_stderr = 0;
 
+#if (!NGX_AS_LIB)
     if (ngx_process == NGX_PROCESS_SINGLE) {
+#endif
         ngx_single_process_cycle(cycle);
-
+#if (!NGX_AS_LIB)
     } else {
         ngx_master_process_cycle(cycle);
     }
-
+#endif
     return 0;
 }
 

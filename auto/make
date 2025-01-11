@@ -12,7 +12,8 @@ mkdir -p $NGX_OBJS/src/core $NGX_OBJS/src/event $NGX_OBJS/src/event/modules \
          $NGX_OBJS/src/http/modules $NGX_OBJS/src/http/modules/perl \
          $NGX_OBJS/src/mail \
          $NGX_OBJS/src/stream \
-         $NGX_OBJS/src/misc
+         $NGX_OBJS/src/misc \
+         $NGX_OBJS/src/ngx_as_lib
 
 
 ngx_objs_dir=$NGX_OBJS$ngx_regex_dirsep
@@ -44,6 +45,9 @@ CFLAGS += -I$FF_PATH/lib
 
 END
 
+if [ $NGX_AS_LIB = YES ]; then
+    echo "CFLAGS += -fPIC"                                    >> $NGX_MAKEFILE
+fi
 
 if test -n "$NGX_PERL_CFLAGS"; then
     echo NGX_PERL_CFLAGS = $NGX_PERL_CFLAGS                   >> $NGX_MAKEFILE
@@ -238,6 +242,24 @@ ngx_link=${CORE_LINK:+`echo $CORE_LINK \
 ngx_main_link=${MAIN_LINK:+`echo $MAIN_LINK \
     | sed -e "s/\//$ngx_regex_dirsep/g" -e "s/^/$ngx_long_regex_cont/"`}
 
+if [ $NGX_AS_LIB = YES ]; then
+    case "$NGX_SYSTEM" in
+        Linux*)
+            ngx_dirsep="${ngx_dirsep}lib"
+            ngx_binext=".so"
+            ngx_main_link="$ngx_main_link -Wl,--version-script=symbols/linux"
+        ;;
+        Darwin*)
+            ngx_dirsep="${ngx_dirsep}lib"
+            ngx_binext=".dylib"
+            ngx_main_link="$ngx_main_link -Wl,-exported_symbols_list,symbols/macos"
+        ;;
+        *)
+            ngx_binext=".dll"
+        ;;
+    esac
+    ngx_main_link="$ngx_main_link -shared"
+fi
 
 cat << END                                                    >> $NGX_MAKEFILE
 
@@ -688,3 +710,15 @@ END
         fi
     done
 done
+
+echo ".PHONY: sample" >> $NGX_MAKEFILE
+echo "sample:" >> $NGX_MAKEFILE
+echo "\t\$(CC) -o sample/sample -I./ngx_as_lib -L objs \\" >> $NGX_MAKEFILE
+if [ $NGX_SYSTEM != Darwin ]; then
+echo "\t\t-Wl,--no-as-needed \\" >> $NGX_MAKEFILE
+fi
+echo "\t\t-lnginx \\" >> $NGX_MAKEFILE
+if [ $NGX_SYSTEM != Darwin ]; then
+echo "\t\t-Wl,--as-needed \\" >> $NGX_MAKEFILE
+fi
+echo "\t\tsample/main.c" >> $NGX_MAKEFILE

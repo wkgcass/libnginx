@@ -491,7 +491,9 @@ ngx_kqueue_set_event(ngx_event_t *ev, ngx_int_t filter, ngx_uint_t flags)
 static ngx_int_t
 ngx_kqueue_notify(ngx_event_handler_pt handler)
 {
-    notify_event.handler = handler;
+    if (handler) {
+        notify_event.handler = handler;
+    }
 
     if (kevent(ngx_kqueue, &notify_kev, 1, NULL, 0, NULL) == -1) {
         ngx_log_error(NGX_LOG_ALERT, notify_event.log, ngx_errno,
@@ -551,6 +553,7 @@ ngx_kqueue_process_events(ngx_cycle_t *cycle, ngx_msec_t timer,
                    "kevent timer: %M, changes: %d", timer, n);
 #endif
 
+    notify_event.handler = NULL; // clear last notify event handler
     events = kevent(ngx_kqueue, change_list, n, event_list, (int) nevents, tp);
 
     err = (events == -1) ? ngx_errno : 0;
@@ -690,7 +693,8 @@ ngx_kqueue_process_events(ngx_cycle_t *cycle, ngx_msec_t timer,
             continue;
         }
 
-        ev->handler(ev);
+        if (ev->handler)
+            ev->handler(ev);
     }
 
     return NGX_OK;
