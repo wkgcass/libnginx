@@ -4,6 +4,138 @@
   <img alt="NGINX Banner">
 </picture>
 
+---
+
+## Build as Lib
+
+```bash
+auto/configure \
+	--with-http_ssl_module        \
+	--with-http_v2_module         \
+	--with-http_v3_module         \
+	--with-ngx_as_lib
+# You may add `--without-http_rewrite_module` if you don't have PCRE library.
+
+make
+make sample
+```
+
+> Any statically linked module should work fine when compiling with `--with-ngx_as_lib`.  
+> It would be fine if any module depends on a shared library,  
+> but the module itself should not be a shared library.
+
+You can find the following results:
+
+* `objs/libnginx.so` or `objs/libnginx.dylib`
+* `sample/sample`
+
+## Run the sample
+
+```bash
+LD_LIBRARY_PATH=`pwd`/objs ./sample/sample -c `pwd`/sample/sample.conf
+
+# another shell
+curl 127.0.0.1:7788/sample
+curl 127.0.0.1:7788/sample --data 'hello'
+curl 127.0.0.1:7788/sample
+```
+
+## How to use
+
+#### 1. load libnginx
+
+Use `dlopen` to load `libnginx.so` or `libnginx.dylib`.  
+You must **copy** the shared library file, and load **one** for **each** worker thread.
+
+Retrieve `api` from the lib:
+
+```c
+libngx_entrypoint* f = dlsym(lib, LIBNGX);
+ngx_as_lib_api_t* api = f();
+```
+
+You may save the first retrieved `api` to a global variable, maybe called `baseApi`.  
+The only safe api to be invoked on `baseApi` is `get_api_from_req`.
+
+#### 2. prepare the `ngx_as_lib_upcall_t` object
+
+```c
+ngx_as_lib_upcall_t* upcall = malloc(sizeof(ngx_as_lib_upcall_t));
+memset(upcall, 0, sizeof(*upcall));
+
+upcall->ud =                /* user data */ data;
+upcall->postconfiguration = /* the postconfiguration callback */ postconfiguration;
+
+// optional fields:
+upcall->looptick;      // called for each nginx loop
+upcall->init_master;   // the init_master callback
+upcall->init_module;   // the init_module callback
+upcall->init_process;  // the init_process callback
+upcall->init_thread;   // the init_thread callback
+upcall->exit_thread;   // the exit_thread callback
+upcall->exit_process;  // the exit_process callback
+upcall->exit_master;   // the exit_master callback
+// though theses callbacks are provided, some of them would never be called
+// since the nginx instances are launched with `master_process off` implicitly
+```
+
+#### 3. implement callbacks
+
+The most important callback is `postconfiguration`, you may register an http handler to the config:
+
+```c
+intptr_t postconfiguration(ngx_as_lib_api_t* api, void* ud, ngx_conf_t* cf) {
+    return api->add_http_handler(cf, NGX_HTTP_CONTENT_PHASE, handler);
+}
+```
+
+The `handler` is the http handler registered into the nginx configuration structure.  
+Usually you would need the http body from the http request, so you can implement as the follow:
+
+```c
+intptr_t sample_handler(ngx_http_request_t* r) {
+    ngx_as_lib_api_t* api = baseApi->get_api_from_req(r);
+    int err = api->http_read_client_request_body(r, body_handler);
+    if (err >= NGX_HTTP_SPECIAL_RESPONSE) {
+        return err;
+    }
+    return NGX_DONE;
+}
+```
+
+In the `body_handler`, you can retrieve request body from `r->request_body`.
+
+* Call `api->http_send_header(r)` to send http headers (though they may not be directed flushed to client).
+* Call `api->http_buf_output_filter(r, buf)` to send the buf as http payload.
+* Call `api->http_finalize_request(r, code)` when you finished processing the request.
+
+You may refer to the `sample/main.c` about how to implement a simple http server based on nginx base code and above apis.
+
+#### 4. set the upcall
+
+```c
+api->set_upcall(upcall);
+```
+
+#### 5. spawn the worker thread
+
+```c
+pthread_t thread;
+int err = api->main_new_thread(&thread, argc, argv);
+if (err) {
+    goto errout;
+}
+pthread_join(thread, NULL);
+```
+
+The `argc` and `argv` are the same as those would be passed to a normal nginx program, such as:
+
+* `nginx`
+* `-c`
+* `/etc/nginx/nginx.conf`
+
+---
+
 NGINX (pronounced "engine x" or "en-jin-eks") is the world's most popular Web Server, high performance Load Balancer, Reverse Proxy, API Gateway and Content Cache.
 
 NGINX is free and open source software, distributed under the terms of a simplified [2-clause BSD-like license](LICENSE).
