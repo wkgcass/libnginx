@@ -37,6 +37,9 @@ ngx_process_t    ngx_processes[NGX_MAX_PROCESSES];
 
 
 ngx_signal_t  signals[] = {
+#if (!NGX_AS_LIB)
+// do not handle signals when built as a lib
+
     { ngx_signal_value(NGX_RECONFIGURE_SIGNAL),
       "SIG" ngx_value(NGX_RECONFIGURE_SIGNAL),
       "reload",
@@ -76,7 +79,7 @@ ngx_signal_t  signals[] = {
     { SIGCHLD, "SIGCHLD", "", ngx_signal_handler },
 
     { SIGSYS, "SIGSYS, SIG_IGN", "", NULL },
-
+#endif
     { SIGPIPE, "SIGPIPE, SIG_IGN", "", NULL },
 
     { 0, NULL, "", NULL }
@@ -315,6 +318,8 @@ ngx_init_signals(ngx_log_t *log)
 }
 
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
 static void
 ngx_signal_handler(int signo, siginfo_t *siginfo, void *ucontext)
 {
@@ -465,6 +470,7 @@ ngx_signal_handler(int signo, siginfo_t *siginfo, void *ucontext)
 
     ngx_set_errno(err);
 }
+#pragma GCC diagnostic pop
 
 
 static void

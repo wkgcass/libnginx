@@ -294,6 +294,13 @@ ngx_single_process_cycle(ngx_cycle_t *cycle)
         }
     }
 
+#if (NGX_AS_LIB)
+    ngx_cpuset_t* cpu_affinity = ngx_get_cpu_affinity(0);
+    if (cpu_affinity) {
+        ngx_setaffinity(cpu_affinity, cycle->log);
+    }
+#endif
+
     for ( ;; ) {
         ngx_log_debug0(NGX_LOG_DEBUG_EVENT, cycle->log, 0, "worker cycle");
 

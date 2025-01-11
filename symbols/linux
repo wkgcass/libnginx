@@ -1,0 +1,6 @@
+libnginx {
+  global:
+    libngx;
+  local:
+    *;
+};

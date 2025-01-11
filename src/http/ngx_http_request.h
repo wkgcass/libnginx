@@ -9,6 +9,9 @@
 #define _NGX_HTTP_REQUEST_H_INCLUDED_
 
 
+#include <stdbool.h>
+
+
 #define NGX_HTTP_MAX_URI_CHANGES           10
 #define NGX_HTTP_MAX_SUBREQUESTS           50
 
@@ -203,7 +206,7 @@ typedef struct {
     ngx_table_elt_t                  *expect;
     ngx_table_elt_t                  *upgrade;
 
-#if (NGX_HTTP_GZIP || NGX_HTTP_HEADERS)
+#if (NGX_HTTP_GZIP || NGX_HTTP_HEADERS || NGX_AS_LIB)
     ngx_table_elt_t                  *accept_encoding;
     ngx_table_elt_t                  *via;
 #endif
@@ -212,20 +215,20 @@ typedef struct {
 
     ngx_table_elt_t                  *keep_alive;
 
-#if (NGX_HTTP_X_FORWARDED_FOR)
+#if (NGX_HTTP_X_FORWARDED_FOR || NGX_AS_LIB)
     ngx_table_elt_t                  *x_forwarded_for;
 #endif
 
-#if (NGX_HTTP_REALIP)
+#if (NGX_HTTP_REALIP || NGX_AS_LIB)
     ngx_table_elt_t                  *x_real_ip;
 #endif
 
-#if (NGX_HTTP_HEADERS)
+#if (NGX_HTTP_HEADERS || NGX_AS_LIB)
     ngx_table_elt_t                  *accept;
     ngx_table_elt_t                  *accept_language;
 #endif
 
-#if (NGX_HTTP_DAV)
+#if (NGX_HTTP_DAV || NGX_AS_LIB)
     ngx_table_elt_t                  *depth;
     ngx_table_elt_t                  *destination;
     ngx_table_elt_t                  *overwrite;
@@ -392,10 +395,6 @@ struct ngx_http_request_s {
     ngx_http_event_handler_pt         read_event_handler;
     ngx_http_event_handler_pt         write_event_handler;
 
-#if (NGX_HTTP_CACHE)
-    ngx_http_cache_t                 *cache;
-#endif
-
     ngx_http_upstream_t              *upstream;
     ngx_array_t                      *upstream_states;
                                          /* of ngx_http_upstream_state_t */
@@ -438,12 +437,6 @@ struct ngx_http_request_s {
 
     ngx_http_variable_value_t        *variables;
 
-#if (NGX_PCRE)
-    ngx_uint_t                        ncaptures;
-    int                              *captures;
-    u_char                           *captures_data;
-#endif
-
     size_t                            limit_rate;
     size_t                            limit_rate_after;
 
@@ -462,7 +455,60 @@ struct ngx_http_request_s {
 
     ngx_http_cleanup_t               *cleanup;
 
-    unsigned                          count:16;
+    /* used to parse HTTP headers */
+
+    ngx_uint_t                        state;
+
+    ngx_uint_t                        header_hash;
+    ngx_uint_t                        lowcase_index;
+    u_char                            lowcase_header[NGX_HTTP_LC_HEADER_LEN];
+
+    u_char                           *header_name_start;
+    u_char                           *header_name_end;
+    u_char                           *header_start;
+    u_char                           *header_end;
+
+    /*
+     * a memory that can be reused after parsing a request line
+     * via ngx_http_ephemeral_t
+     */
+
+    u_char                           *uri_start;
+    u_char                           *uri_end;
+    u_char                           *uri_ext;
+    u_char                           *args_start;
+    u_char                           *request_start;
+    u_char                           *request_end;
+    u_char                           *method_end;
+    u_char                           *schema_start;
+    u_char                           *schema_end;
+    u_char                           *host_start;
+    u_char                           *host_end;
+
+#if (NGX_AS_LIB)
+    // usually the application ueses a buf to respond
+    // allocate it with the request object to make things easier
+    ngx_buf_t                         appbuf;
+#endif
+
+    uint16_t                          http_minor;
+    uint16_t                          http_major;
+
+    uint16_t                          count;
+    bool                              header_only;
+
+    u_char                           *port_start;
+    u_char                           *port_end;
+
+#if (NGX_HTTP_CACHE)
+    ngx_http_cache_t                 *cache;
+#endif
+#if (NGX_PCRE)
+    ngx_uint_t                        ncaptures;
+    int                              *captures;
+    u_char                           *captures_data;
+#endif
+
     unsigned                          subrequests:8;
     unsigned                          blocked:8;
 
@@ -501,20 +547,6 @@ struct ngx_http_request_s {
     unsigned                          subrequest_in_memory:1;
     unsigned                          waited:1;
 
-#if (NGX_HTTP_CACHE)
-    unsigned                          cached:1;
-#endif
-
-#if (NGX_HTTP_GZIP)
-    unsigned                          gzip_tested:1;
-    unsigned                          gzip_ok:1;
-    unsigned                          gzip_vary:1;
-#endif
-
-#if (NGX_PCRE)
-    unsigned                          realloc_captures:1;
-#endif
-
     unsigned                          proxy:1;
     unsigned                          bypass_cache:1;
     unsigned                          no_cache:1;
@@ -530,13 +562,8 @@ struct ngx_http_request_s {
     unsigned                          limit_rate_set:1;
     unsigned                          limit_rate_after_set:1;
 
-#if 0
-    unsigned                          cacheable:1;
-#endif
-
     unsigned                          pipeline:1;
     unsigned                          chunked:1;
-    unsigned                          header_only:1;
     unsigned                          expect_trailers:1;
     unsigned                          keepalive:1;
     unsigned                          lingering_close:1;
@@ -572,40 +599,20 @@ struct ngx_http_request_s {
     unsigned                          background:1;
     unsigned                          health_check:1;
 
-    /* used to parse HTTP headers */
-
-    ngx_uint_t                        state;
-
-    ngx_uint_t                        header_hash;
-    ngx_uint_t                        lowcase_index;
-    u_char                            lowcase_header[NGX_HTTP_LC_HEADER_LEN];
-
-    u_char                           *header_name_start;
-    u_char                           *header_name_end;
-    u_char                           *header_start;
-    u_char                           *header_end;
-
-    /*
-     * a memory that can be reused after parsing a request line
-     * via ngx_http_ephemeral_t
-     */
-
-    u_char                           *uri_start;
-    u_char                           *uri_end;
-    u_char                           *uri_ext;
-    u_char                           *args_start;
-    u_char                           *request_start;
-    u_char                           *request_end;
-    u_char                           *method_end;
-    u_char                           *schema_start;
-    u_char                           *schema_end;
-    u_char                           *host_start;
-    u_char                           *host_end;
-    u_char                           *port_start;
-    u_char                           *port_end;
-
-    unsigned                          http_minor:16;
-    unsigned                          http_major:16;
+#if (NGX_HTTP_CACHE)
+    unsigned                          cached:1;
+#endif
+#if (NGX_HTTP_GZIP)
+    unsigned                          gzip_tested:1;
+    unsigned                          gzip_ok:1;
+    unsigned                          gzip_vary:1;
+#endif
+#if (NGX_PCRE)
+    unsigned                          realloc_captures:1;
+#endif
+#if 0
+    unsigned                          cacheable:1;
+#endif
 };
 
 
