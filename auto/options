@@ -235,6 +235,7 @@ $0: warning: the \"--with-ipv6\" option is deprecated"
         --http-uwsgi-temp-path=*)        NGX_HTTP_UWSGI_TEMP_PATH="$value" ;;
         --http-scgi-temp-path=*)         NGX_HTTP_SCGI_TEMP_PATH="$value" ;;
 
+        --with-ngx_as_lib)               NGX_AS_LIB=YES             ;;
         --with-http_ssl_module)          HTTP_SSL=YES               ;;
         --with-http_v2_module)           HTTP_V2=YES                ;;
         --with-http_v3_module)           HTTP_V3=YES                ;;
@@ -456,6 +457,7 @@ cat << END
 
   --without-quic_bpf_module          disable ngx_quic_bpf_module
 
+  --with-ngx_as_lib                  compile nginx to a library
   --with-http_ssl_module             enable ngx_http_ssl_module
   --with-http_v2_module              enable ngx_http_v2_module
   --with-http_v3_module              enable ngx_http_v3_module

@@ -453,7 +453,8 @@ ngx_epoll_notify_handler(ngx_event_t *ev)
     }
 
     handler = ev->data;
-    handler(ev);
+    if (handler)
+        handler(ev);
 }
 
 #endif
@@ -766,7 +767,9 @@ ngx_epoll_notify(ngx_event_handler_pt handler)
 {
     static uint64_t inc = 1;
 
-    notify_event.data = handler;
+    if (handler) {
+        notify_event.data = handler;
+    }
 
     if ((size_t) write(notify_fd, &inc, sizeof(uint64_t)) != sizeof(uint64_t)) {
         ngx_log_error(NGX_LOG_ALERT, notify_event.log, ngx_errno,
@@ -797,6 +800,7 @@ ngx_epoll_process_events(ngx_cycle_t *cycle, ngx_msec_t timer, ngx_uint_t flags)
     ngx_log_debug1(NGX_LOG_DEBUG_EVENT, cycle->log, 0,
                    "epoll timer: %M", timer);
 
+    notify_event.data = NULL; // clear last notify event handler
     events = epoll_wait(ep, event_list, (int) nevents, timer);
 
     err = (events == -1) ? ngx_errno : 0;

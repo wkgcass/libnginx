@@ -47,7 +47,10 @@ cat << END > Makefile
 default:	build
 
 clean:
-	rm -rf Makefile $NGX_OBJS
+	rm -rf Makefile sample/sample $NGX_OBJS
 
-.PHONY:	default clean
+sample:
+	\$(MAKE) -f objs/Makefile sample
+
+.PHONY:	default clean sample
 END
