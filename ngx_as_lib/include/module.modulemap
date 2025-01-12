@@ -1,0 +1,4 @@
+module libnginx {
+    header "../ngx_as_lib_swift.h"
+    export *
+}

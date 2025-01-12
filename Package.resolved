@@ -1,0 +1,33 @@
+{
+  "originHash" : "b88ad50682fd2f45f94c12a3b92691269c9f7954211edb7205ae14589b7a4b25",
+  "pins" : [
+    {
+      "identity" : "swift-argument-parser",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-argument-parser",
+      "state" : {
+        "branch" : "1.5.0",
+        "revision" : "41982a3656a71c768319979febd796c6fd111d5c"
+      }
+    },
+    {
+      "identity" : "swift-atomics",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-atomics",
+      "state" : {
+        "branch" : "1.2.0",
+        "revision" : "cd142fd2f64be2100422d658e7411e39489da985"
+      }
+    },
+    {
+      "identity" : "waitfreempscqueueswift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/vproxy-tools/WaitfreeMpscQueueSwift",
+      "state" : {
+        "branch" : "stable",
+        "revision" : "f094724acc8e1da08c4b71f8e5864f0c6cf3192a"
+      }
+    }
+  ],
+  "version" : 3
+}
