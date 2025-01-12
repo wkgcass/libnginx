@@ -1,0 +1,10 @@
+--ifdef outdent
+--hexliteralcase lowercase
+
+--disable redundantReturn
+--disable conditionalAssignment
+--disable andOperator
+--disable opaqueGenericParameters
+
+--exclude ./.build
+--exclude ./submodules
