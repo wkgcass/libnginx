@@ -134,6 +134,59 @@ The `argc` and `argv` are the same as those would be passed to a normal nginx pr
 * `-c`
 * `/etc/nginx/nginx.conf`
 
+## Swift support
+
+You can use this library with `Swift`.
+
+#### sample
+
+```bash
+swift run sample --threads=4
+```
+
+#### how to use
+
+```swift
+let package = Package(
+    // ...
+    dependencies: [
+        .package(url: "https://github.com/wkgcass/libnginx", branch: "libnginx"),
+    ]
+    // ...
+)
+```
+
+```swift
+import ngx_swift
+
+let app = App(libpath: "libnginx.so")
+app.threads = [AppThreadConf](repeating: AppThreadConf(), count: 4)
+
+app.addHttpServerHandler(id: 1) { req in
+    req.status(200)
+    return try req.end("I am upcall 1\r\n")
+}
+app.addHttpServerHandler(id: 2) { req in
+    req.status(200)
+    return try req.end("I am upcall 2\r\n")
+}
+try app.launch(conf: """
+events {}
+http {
+    server {
+        listen 0.0.0.0:7788 reuseport;
+        location = /a {
+            upcall 1;
+        }
+        location = /b {
+            upcall 2;
+        }
+    }
+}
+""")
+// should block forever
+```
+
 ---
 
 NGINX (pronounced "engine x" or "en-jin-eks") is the world's most popular Web Server, high performance Load Balancer, Reverse Proxy, API Gateway and Content Cache.
