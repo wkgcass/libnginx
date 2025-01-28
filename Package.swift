@@ -35,6 +35,7 @@ let package = Package(
             dependencies: [
                 "libnginx",
                 "WaitfreeMpscQueueSwift",
+                "LinuxSOMemfd",
                 .product(name: "Atomics", package: "swift-atomics"),
             ]
         ),
@@ -44,6 +45,13 @@ let package = Package(
         .target(
             name: "libnginx",
             path: "ngx_as_lib",
+            cSettings: [
+                .unsafeFlags(["-Wall"]),
+            ]
+        ),
+        .target(
+            name: "LinuxSOMemfd",
+            path: "LinuxSOMemfd",
             cSettings: [
                 .unsafeFlags(["-Wall"]),
             ]

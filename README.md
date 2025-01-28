@@ -6,6 +6,12 @@
 
 ---
 
+## Functions
+
+1. `http/1.x`, `h2`, `h3` server
+2. `http/1.x` client
+3. dynamic upstream
+
 ## Build as Lib
 
 ```bash
@@ -15,6 +21,7 @@ auto/configure \
 	--with-http_v3_module         \
 	--with-ngx_as_lib
 # You may add `--without-http_rewrite_module` if you don't have PCRE library.
+# Or install it using `apt install libpcre3-dev`
 
 make
 make sample
@@ -31,6 +38,8 @@ You can find the following results:
 
 ## Run the sample
 
+#### C
+
 ```bash
 LD_LIBRARY_PATH=`pwd`/objs ./sample/sample -c `pwd`/sample/sample.conf
 
@@ -38,6 +47,16 @@ LD_LIBRARY_PATH=`pwd`/objs ./sample/sample -c `pwd`/sample/sample.conf
 curl 127.0.0.1:7788/sample
 curl 127.0.0.1:7788/sample --data 'hello'
 curl 127.0.0.1:7788/sample
+```
+
+#### Swift
+
+```bash
+swift run sample --threads=4
+
+# another shell
+curl 127.0.0.1:7788
+# will display all available apis
 ```
 
 ## How to use

@@ -293,6 +293,13 @@ ngx_kqueue_done(ngx_cycle_t *cycle)
 static ngx_int_t
 ngx_kqueue_add_event(ngx_event_t *ev, ngx_int_t event, ngx_uint_t flags)
 {
+#if (NGX_AS_LIB)
+    ngx_connection_t* c = ev->data;
+    if (c && c->fd == NGX_DUMMY_FD) {
+        return NGX_OK;
+    }
+#endif
+
     ngx_int_t          rc;
 #if 0
     ngx_event_t       *e;
@@ -349,6 +356,13 @@ ngx_kqueue_add_event(ngx_event_t *ev, ngx_int_t event, ngx_uint_t flags)
 static ngx_int_t
 ngx_kqueue_del_event(ngx_event_t *ev, ngx_int_t event, ngx_uint_t flags)
 {
+#if (NGX_AS_LIB)
+    ngx_connection_t* c = ev->data;
+    if (c && c->fd == NGX_DUMMY_FD) {
+        return NGX_OK;
+    }
+#endif
+
     ngx_int_t     rc;
     ngx_event_t  *e;
 
@@ -408,6 +422,11 @@ ngx_kqueue_set_event(ngx_event_t *ev, ngx_int_t filter, ngx_uint_t flags)
     ngx_connection_t  *c;
 
     c = ev->data;
+#if (NGX_AS_LIB)
+    if (c && c->fd == NGX_DUMMY_FD) {
+        return NGX_OK;
+    }
+#endif
 
     ngx_log_debug3(NGX_LOG_DEBUG_EVENT, ev->log, 0,
                    "kevent set event: %d: ft:%i fl:%04Xi",

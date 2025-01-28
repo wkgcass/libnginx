@@ -12,7 +12,7 @@ typedef struct ngx_as_lib_api_s ngx_as_lib_api_t;
 struct ngx_as_lib_upcall_s {
     void* ud;
 
-    void (*looptick)(ngx_as_lib_api_t* api, void* ud);
+    int64_t (*looptick)(ngx_as_lib_api_t* api, void* ud);
 
     // conf set callback
     // char* (*http_conf_set)(ngx_conf_t* cf, ngx_command_t* cmd, void* conf);
@@ -35,6 +35,7 @@ struct ngx_as_lib_upcall_s {
     // char*  (*merge_srv_conf)   (ngx_as_lib_api_t* api, void* ud, ngx_conf_t* cf, void* prev, void* conf);
     // void*  (*create_loc_conf)  (ngx_as_lib_api_t* api, void* ud, ngx_conf_t* cf);
     // char*  (*merge_loc_conf)   (ngx_as_lib_api_t* api, void* ud, ngx_conf_t* cf, void* prev, void* conf);
+    intptr_t(*get_upstream_peer)(ngx_as_lib_api_t*api, void* ud, ngx_http_request_t* r, uintptr_t id, ngx_peer_connection_t* pc);
 };
 typedef struct ngx_as_lib_upcall_s ngx_as_lib_upcall_t;
 
@@ -54,6 +55,14 @@ struct ngx_as_lib_api_s {
     intptr_t   (*http_send_header)(ngx_http_request_t* r);
     intptr_t   (*http_buf_output_filter)(ngx_http_request_t* r, ngx_buf_t* buf);
     void       (*http_finalize_request)(ngx_http_request_t* r, intptr_t code);
+    intptr_t   (*add_http_header)(ngx_http_request_t* r, ngx_list_t* headers, const char* key, const char* value);
+
+    ngx_http_request_t* (*new_http_dummy_request)(intptr_t server_id);
+    void       (*http_run_posted_requests)(ngx_connection_t* c);
+    intptr_t   (*http_subrequest)(ngx_http_request_t* r, intptr_t method,
+                                  char* uri, char* args, ngx_buf_t* body,
+                                  ngx_http_init_subrequest_t* is,
+                                  ngx_http_post_subrequest_t* cb);
 
     int32_t (*main)(int32_t argc, char** argv);
     int32_t (*main_new_thread)(pthread_t* t, int32_t argc, char** argv);

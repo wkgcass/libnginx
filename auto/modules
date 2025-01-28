@@ -152,17 +152,13 @@ if [ $HTTP = YES ]; then
     ngx_module_type=HTTP_FILTER
     HTTP_FILTER_MODULES=
 
-    ngx_module_order="ngx_http_static_module"
-    if [ $NGX_AS_LIB = YES ]; then
-        ngx_module_order="$ngx_module_order \
-                          ngx_as_lib_http_module"
-    fi
-    ngx_module_order="$ngx_module_order \
+    ngx_module_order="ngx_http_static_module \
                       ngx_http_gzip_static_module \
                       ngx_http_dav_module \
                       ngx_http_autoindex_module \
                       ngx_http_index_module \
                       ngx_http_random_index_module \
+                      ngx_as_lib_http_module \
                       ngx_http_access_module \
                       ngx_http_realip_module \
                       ngx_http_write_filter_module \
@@ -486,19 +482,6 @@ if [ $HTTP = YES ]; then
         . auto/module
     fi
 
-    if [ $NGX_AS_LIB = YES ]; then
-        have=NGX_AS_LIB . auto/have
-
-        ngx_module_name=ngx_as_lib_http_module
-        ngx_module_incs=src/ngx_as_lib
-        ngx_module_deps=
-        ngx_module_srcs=$NGX_AS_LIB_SRCS
-        ngx_module_libs=
-        ngx_module_link=YES
-
-        . auto/module
-    fi
-
     if [ $HTTP_GZIP_STATIC = YES ]; then
         have=NGX_HTTP_GZIP . auto/have
 
@@ -554,6 +537,30 @@ if [ $HTTP = YES ]; then
         ngx_module_srcs=src/http/modules/ngx_http_random_index_module.c
         ngx_module_libs=
         ngx_module_link=$HTTP_RANDOM_INDEX
+
+        . auto/module
+    fi
+
+    if [ $NGX_AS_LIB = YES ]; then
+        have=NGX_AS_LIB . auto/have
+
+        ngx_module_name=ngx_as_lib_http_module
+        ngx_module_incs=src/ngx_as_lib
+        ngx_module_deps=
+        ngx_module_srcs="src/ngx_as_lib/ngx_as_lib_module.c \
+                         src/ngx_as_lib/ngx_as_lib_http_module.c"
+        ngx_module_libs=
+        ngx_module_link=YES
+
+        . auto/module
+
+        ngx_module_name=ngx_as_lib_http_upstream_module
+        ngx_module_srcs=src/ngx_as_lib/ngx_as_lib_http_upstream_module.c
+
+        . auto/module
+
+        ngx_module_name=ngx_as_lib_http_server_id_module
+        ngx_module_srcs=src/ngx_as_lib/ngx_as_lib_http_server_id_module.c
 
         . auto/module
     fi

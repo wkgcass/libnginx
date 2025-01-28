@@ -117,4 +117,8 @@ void ngx_cpuinfo(void);
 #define NGX_DISABLE_SYMLINKS_NOTOWNER   2
 #endif
 
+#if (NGX_AS_LIB)
+#define NGX_DUMMY_FD (-0x1fffffff)
+#endif
+
 #endif /* _NGX_CORE_H_INCLUDED_ */
