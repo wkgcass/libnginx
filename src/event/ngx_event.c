@@ -190,7 +190,7 @@ ngx_module_t  ngx_event_core_module = {
     NGX_MODULE_V1_PADDING
 };
 
-extern void ngx_as_lib_looptick(void);
+extern int64_t ngx_as_lib_looptick(void);
 
 void
 ngx_process_events_and_timers(ngx_cycle_t *cycle)
@@ -244,6 +244,13 @@ ngx_process_events_and_timers(ngx_cycle_t *cycle)
         timer = 0;
     }
 
+#if (NGX_AS_LIB)
+    int64_t millis = ngx_as_lib_looptick();
+    if (millis >= 0 && timer > (uint64_t)millis) {
+        timer = millis;
+    }
+#endif
+
     delta = ngx_current_msec;
 
     (void) ngx_process_events(cycle, timer, flags);
@@ -262,10 +269,6 @@ ngx_process_events_and_timers(ngx_cycle_t *cycle)
     ngx_event_expire_timers();
 
     ngx_event_process_posted(cycle, &ngx_posted_events);
-
-#if (NGX_AS_LIB)
-    ngx_as_lib_looptick();
-#endif
 }
 
 

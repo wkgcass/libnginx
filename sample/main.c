@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 struct sample_data {
     char* data;
@@ -102,11 +104,23 @@ intptr_t sample_postconfiguration(ngx_as_lib_api_t* api, void* ud, ngx_conf_t* c
     return api->add_http_handler(cf, NGX_HTTP_CONTENT_PHASE, sample_handler);
 }
 
-void sample_looptick(ngx_as_lib_api_t* api, void* _ud) {
+intptr_t sample_get_upstream_peer(ngx_as_lib_api_t* api, void* ud, ngx_http_request_t* r,
+  uintptr_t id, ngx_peer_connection_t* pc) {
+    struct sockaddr_in* sockaddr = api->pcalloc(r->pool, sizeof(struct sockaddr_in));
+    sockaddr->sin_family = AF_INET;
+    inet_pton(AF_INET, "127.0.0.1", &sockaddr->sin_addr);
+    sockaddr->sin_port = htons(8899);
+    pc->sockaddr = (void*)sockaddr;
+    pc->socklen = sizeof(*sockaddr);
+    return NGX_OK;
+}
+
+int64_t sample_looptick(ngx_as_lib_api_t* api, void* _ud) {
     struct sample_data* ud = _ud;
     char log[256];
     sprintf(log, "loop tick triggered, data=%s", ud->data);
     api->log(NGX_LOG_INFO, log);
+    return -1;
 }
 
 int main(int argc, char** argv) {
@@ -115,6 +129,7 @@ int main(int argc, char** argv) {
         .ud = &data,
         .looptick = sample_looptick,
         .postconfiguration = sample_postconfiguration,
+        .get_upstream_peer = sample_get_upstream_peer,
     };
 
     libngx()->set_upcall(&upcall);

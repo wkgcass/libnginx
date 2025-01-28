@@ -2312,8 +2312,11 @@ ngx_http_gzip_quantity(u_char *p, u_char *last)
 
 
 ngx_int_t
-ngx_http_subrequest(ngx_http_request_t *r,
-    ngx_str_t *uri, ngx_str_t *args, ngx_http_request_t **psr,
+ngx_http_subrequest_complex(ngx_http_request_t *r,
+    ngx_int_t method, ngx_str_t *uri, ngx_str_t *args,
+    bool init_headers, ngx_buf_t* body,
+    ngx_http_request_t **psr,
+    ngx_http_init_subrequest_t *is,
     ngx_http_post_subrequest_t *ps, ngx_uint_t flags)
 {
     ngx_time_t                    *tp;
@@ -2380,19 +2383,41 @@ ngx_http_subrequest(ngx_http_request_t *r,
 
     sr->pool = r->pool;
 
-    sr->headers_in = r->headers_in;
+    if (init_headers) {
+        if (ngx_list_init(&sr->headers_in.headers, r->pool, 20,
+                          sizeof(ngx_table_elt_t))
+            != NGX_OK)
+        {
+            return NGX_ERROR;
+        }
+    } else {
+        sr->headers_in = r->headers_in;
+    }
 
     ngx_http_clear_content_length(sr);
     ngx_http_clear_accept_ranges(sr);
     ngx_http_clear_last_modified(sr);
 
-    sr->request_body = r->request_body;
+    if (body) {
+        sr->request_body = ngx_pcalloc(r->pool, sizeof(ngx_http_request_body_t));
+        if (!sr->request_body) {
+            return NGX_ERROR;
+        }
+        sr->request_body->bufs = ngx_pcalloc(r->pool, sizeof(ngx_chain_t));
+        if (!sr->request_body->bufs) {
+            return NGX_ERROR;
+        }
+        sr->request_body->bufs->buf = body;
+        sr->headers_in.content_length_n = body->last - body->pos;
+    } else {
+        sr->request_body = r->request_body;
+    }
 
 #if (NGX_HTTP_V2)
     sr->stream = r->stream;
 #endif
 
-    sr->method = NGX_HTTP_GET;
+    sr->method = method;
     sr->http_version = r->http_version;
 
     sr->request_line = r->request_line;
@@ -2410,7 +2435,7 @@ ngx_http_subrequest(ngx_http_request_t *r,
     sr->background = (flags & NGX_HTTP_SUBREQUEST_BACKGROUND) != 0;
 
     sr->unparsed_uri = r->unparsed_uri;
-    sr->method_name = ngx_http_core_get_method;
+    sr->method_name = *ngx_http_method_str(method);
     sr->http_protocol = r->http_protocol;
     sr->schema = r->schema;
 
@@ -2491,7 +2516,21 @@ ngx_http_subrequest(ngx_http_request_t *r,
         ngx_http_update_location_config(sr);
     }
 
+    if (is) {
+        if (is->handler(sr, is->data) != NGX_OK) {
+            return NGX_ERROR;
+        }
+    }
+
     return ngx_http_post_request(sr, NULL);
+}
+
+
+ngx_int_t
+ngx_http_subrequest(ngx_http_request_t *r,
+    ngx_str_t *uri, ngx_str_t *args, ngx_http_request_t **psr,
+    ngx_http_post_subrequest_t *ps, ngx_uint_t flags) {
+    return ngx_http_subrequest_complex(r, NGX_HTTP_GET, uri, args, false, NULL, psr, NULL, ps, flags);
 }
 
 

@@ -11,7 +11,7 @@
 
 
 static void ngx_http_wait_request_handler(ngx_event_t *ev);
-static ngx_http_request_t *ngx_http_alloc_request(ngx_connection_t *c);
+ngx_http_request_t *ngx_http_alloc_request(ngx_connection_t *c);
 static void ngx_http_process_request_line(ngx_event_t *rev);
 static void ngx_http_process_request_headers(ngx_event_t *rev);
 static ssize_t ngx_http_read_request_header(ngx_http_request_t *r);
@@ -556,7 +556,7 @@ ngx_http_create_request(ngx_connection_t *c)
 }
 
 
-static ngx_http_request_t *
+ngx_http_request_t *
 ngx_http_alloc_request(ngx_connection_t *c)
 {
     ngx_pool_t                 *pool;
@@ -3932,4 +3932,62 @@ ngx_http_log_error_handler(ngx_http_request_t *r, ngx_http_request_t *sr,
     }
 
     return buf;
+}
+
+ngx_str_t ngx_http_unknown_method   = { 7, (u_char *) "UNKNOWN" };
+ngx_str_t ngx_http_get_method       = { 3, (u_char *) "GET" };
+ngx_str_t ngx_http_head_method      = { 4, (u_char *) "HEAD" };
+ngx_str_t ngx_http_post_method      = { 4, (u_char *) "POST" };
+ngx_str_t ngx_http_put_method       = { 3, (u_char *) "PUT" };
+ngx_str_t ngx_http_delete_method    = { 6, (u_char *) "DELETE" };
+ngx_str_t ngx_http_mkcol_method     = { 5, (u_char *) "MKCOL" };
+ngx_str_t ngx_http_copy_method      = { 4, (u_char *) "COPY" };
+ngx_str_t ngx_http_move_method      = { 4, (u_char *) "MOVE" };
+ngx_str_t ngx_http_options_method   = { 7, (u_char *) "OPTIONS" };
+ngx_str_t ngx_http_propfine_method  = { 8, (u_char *) "PROPFIND" };
+ngx_str_t ngx_http_proppatch_method = { 9, (u_char *) "PROPPATCH" };
+ngx_str_t ngx_http_lock_method      = { 4, (u_char *) "LOCK" };
+ngx_str_t ngx_http_unlock_method    = { 6, (u_char *) "UNLOCK" };
+ngx_str_t ngx_http_patch_method     = { 5, (u_char *) "PATCH" };
+ngx_str_t ngx_http_trace_method     = { 5, (u_char *) "TRACE" };
+ngx_str_t ngx_http_connect_method   = { 7, (u_char *) "CONNECT" };
+
+ngx_str_t* ngx_http_method_str(ngx_int_t method) {
+    if (method & NGX_HTTP_UNKNOWN) {
+        return &ngx_http_unknown_method;
+    } else if (method & NGX_HTTP_GET) {
+        return &ngx_http_get_method;
+    } else if (method & NGX_HTTP_HEAD) {
+        return &ngx_http_head_method;
+    } else if (method & NGX_HTTP_POST) {
+        return &ngx_http_post_method;
+    } else if (method & NGX_HTTP_PUT) {
+        return &ngx_http_put_method;
+    } else if (method & NGX_HTTP_DELETE) {
+        return &ngx_http_delete_method;
+    } else if (method & NGX_HTTP_MKCOL) {
+        return &ngx_http_mkcol_method;
+    } else if (method & NGX_HTTP_COPY) {
+        return &ngx_http_copy_method;
+    } else if (method & NGX_HTTP_MOVE) {
+        return &ngx_http_move_method;
+    } else if (method & NGX_HTTP_OPTIONS) {
+        return &ngx_http_options_method;
+    } else if (method & NGX_HTTP_PROPFIND) {
+        return &ngx_http_propfine_method;
+    } else if (method & NGX_HTTP_PROPPATCH) {
+        return &ngx_http_proppatch_method;
+    } else if (method & NGX_HTTP_LOCK) {
+        return &ngx_http_lock_method;
+    } else if (method & NGX_HTTP_UNLOCK) {
+        return &ngx_http_unlock_method;
+    } else if (method & NGX_HTTP_PATCH) {
+        return &ngx_http_patch_method;
+    } else if (method & NGX_HTTP_TRACE) {
+        return &ngx_http_trace_method;
+    } else if (method & NGX_HTTP_CONNECT) {
+        return &ngx_http_connect_method;
+    } else {
+        return &ngx_http_unknown_method;
+    }
 }

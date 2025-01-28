@@ -47,6 +47,8 @@
 #define NGX_HTTP_TRACE                     0x00008000
 #define NGX_HTTP_CONNECT                   0x00010000
 
+ngx_str_t* ngx_http_method_str(ngx_int_t method);
+
 #define NGX_HTTP_CONNECTION_CLOSE          1
 #define NGX_HTTP_CONNECTION_KEEP_ALIVE     2
 
@@ -352,9 +354,15 @@ struct ngx_http_cleanup_s {
 };
 
 
+typedef ngx_int_t (*ngx_http_init_subrequest_pt)(ngx_http_request_t *r,
+    void *data);
 typedef ngx_int_t (*ngx_http_post_subrequest_pt)(ngx_http_request_t *r,
     void *data, ngx_int_t rc);
 
+typedef struct {
+    ngx_http_init_subrequest_pt       handler;
+    void                             *data;
+} ngx_http_init_subrequest_t;
 typedef struct {
     ngx_http_post_subrequest_pt       handler;
     void                             *data;
@@ -384,6 +392,11 @@ typedef void (*ngx_http_event_handler_pt)(ngx_http_request_t *r);
 
 struct ngx_http_request_s {
     uint32_t                          signature;         /* "HTTP" */
+
+#if (NGX_AS_LIB)
+    void*                             data; /* user data */
+    bool                              is_dummy;
+#endif
 
     ngx_connection_t                 *connection;
 

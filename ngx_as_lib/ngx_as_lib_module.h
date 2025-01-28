@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include <sys/socket.h>
 
 #define  NGX_OK          (0)
 #define  NGX_ERROR      (-1)
@@ -66,18 +67,29 @@ struct ngx_pool_s;
 struct ngx_buf_s;
 struct ngx_str_s;
 struct ngx_chain_s;
+struct ngx_list_s;
 struct ngx_list_part_s;
 struct ngx_table_elt_s;
+struct ngx_connection_s;
+struct ngx_peer_connection_s;
+struct ngx_http_init_subrequest_s;
+struct ngx_http_post_subrequest_s;
 
-typedef struct ngx_log_s          ngx_log_t;
-typedef struct ngx_cycle_s        ngx_cycle_t;
-typedef struct ngx_conf_s         ngx_conf_t;
-typedef struct ngx_http_request_s ngx_http_request_t;
-typedef struct ngx_pool_s         ngx_pool_t;
-typedef struct ngx_buf_s          ngx_buf_t;
-typedef struct ngx_str_s          ngx_str_t;
-typedef struct ngx_chain_s        ngx_chain_t;
+typedef struct ngx_log_s             ngx_log_t;
+typedef struct ngx_cycle_s           ngx_cycle_t;
+typedef struct ngx_conf_s            ngx_conf_t;
+typedef struct ngx_http_request_s    ngx_http_request_t;
+typedef struct ngx_pool_s            ngx_pool_t;
+typedef struct ngx_buf_s             ngx_buf_t;
+typedef struct ngx_str_s             ngx_str_t;
+typedef struct ngx_chain_s           ngx_chain_t;
+typedef struct ngx_connection_s      ngx_connection_t;
+typedef struct ngx_peer_connection_s ngx_peer_connection_t;
 
+typedef struct ngx_http_init_subrequest_s ngx_http_init_subrequest_t;
+typedef struct ngx_http_post_subrequest_s ngx_http_post_subrequest_t;
+
+typedef struct ngx_list_s         ngx_list_t;
 typedef struct ngx_list_part_s    ngx_list_part_t;
 typedef struct ngx_table_elt_s    ngx_table_elt_t;
 
@@ -87,6 +99,8 @@ typedef uintptr_t ngx_msec_t;
 
 typedef intptr_t (*ngx_http_handler_pt)(ngx_http_request_t*);
 typedef void     (*ngx_http_client_body_handler_pt)(ngx_http_request_t*);
+typedef intptr_t (*ngx_http_init_subrequest_pt)(ngx_http_request_t *r, void *data);
+typedef intptr_t (*ngx_http_post_subrequest_pt)(ngx_http_request_t *r, void *data, intptr_t rc);
 
 struct ngx_as_lib_api_s;
 typedef struct ngx_as_lib_api_s ngx_as_lib_api_t;
@@ -94,7 +108,7 @@ typedef struct ngx_as_lib_api_s ngx_as_lib_api_t;
 struct ngx_as_lib_upcall_s {
     void* ud;
 
-    void (*looptick)(ngx_as_lib_api_t* api, void* ud);
+    int64_t (*looptick)(ngx_as_lib_api_t* api, void* ud);
 
     // core
     intptr_t (*init_master) (ngx_as_lib_api_t* api, void* ud, ngx_log_t* log);
@@ -107,6 +121,7 @@ struct ngx_as_lib_upcall_s {
 
     // http
     intptr_t(*postconfiguration)(ngx_as_lib_api_t* api, void* ud, ngx_conf_t* cf);
+    intptr_t(*get_upstream_peer)(ngx_as_lib_api_t* api, void* ud, ngx_http_request_t* r, uintptr_t id, ngx_peer_connection_t* pc);
 };
 typedef struct ngx_as_lib_upcall_s ngx_as_lib_upcall_t;
 
@@ -126,6 +141,14 @@ struct ngx_as_lib_api_s {
     intptr_t   (*http_send_header)(ngx_http_request_t* r);
     intptr_t   (*http_buf_output_filter)(ngx_http_request_t* r, ngx_buf_t* buf);
     void       (*http_finalize_request)(ngx_http_request_t* r, intptr_t code);
+    intptr_t   (*add_http_header)(ngx_http_request_t* r, ngx_list_t* headers, const char* key, const char* value);
+
+    ngx_http_request_t* (*new_http_dummy_request)(intptr_t server_id);
+    void       (*http_run_posted_requests)(ngx_connection_t* c);
+    intptr_t   (*http_subrequest)(ngx_http_request_t* r, intptr_t method,
+                                  char* uri, char* args, ngx_buf_t* body,
+                                  ngx_http_init_subrequest_t* is,
+                                  ngx_http_post_subrequest_t* cb);
 
     int32_t (*main)(int32_t argc, char** argv);
     int32_t (*main_new_thread)(pthread_t* t, int32_t argc, char** argv);
@@ -151,13 +174,13 @@ struct ngx_list_part_s {
     ngx_list_part_t* next;
 };
 
-typedef struct {
+struct ngx_list_s {
     ngx_list_part_t*  last;
     ngx_list_part_t   part;
     size_t            size;
     uintptr_t         nalloc;
     ngx_pool_t*       pool;
-} ngx_list_t;
+};
 
 struct ngx_table_elt_s {
     uintptr_t        hash;
@@ -198,6 +221,15 @@ struct ngx_buf_s {
     uint32_t flags;
 
     int32_t num;
+};
+
+struct ngx_http_init_subrequest_s {
+    ngx_http_init_subrequest_pt handler;
+    void*                       data;
+};
+struct ngx_http_post_subrequest_s {
+    ngx_http_post_subrequest_pt handler;
+    void*                       data;
 };
 
 typedef struct {
@@ -316,7 +348,10 @@ typedef struct {
 struct ngx_http_request_s {
     uint32_t                          signature;         /* "HTTP" */
 
-    void*                             connection; // ngx_connection_t
+    void*                             data; /* user data */
+    bool                              is_dummy;
+
+    ngx_connection_t*                 connection;
 
     void**                            ctx;
     void**                            main_conf;
@@ -423,6 +458,13 @@ struct ngx_http_request_s {
 
     uint16_t                          count;
     bool                              header_only;
+};
+
+struct ngx_peer_connection_s {
+    ngx_connection_t* connection;
+    struct sockaddr*  sockaddr;
+    socklen_t         socklen;
+    ngx_str_t*        name;
 };
 
 #endif // _NGX_AS_LIB_MODULE_H_
