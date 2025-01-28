@@ -586,6 +586,11 @@ ngx_epoll_add_event(ngx_event_t *ev, ngx_int_t event, ngx_uint_t flags)
     struct epoll_event   ee;
 
     c = ev->data;
+#if (NGX_AS_LIB)
+    if (c->fd == NGX_DUMMY_FD) {
+        return NGX_OK;
+    }
+#endif
 
     events = (uint32_t) event;
 
@@ -661,6 +666,11 @@ ngx_epoll_del_event(ngx_event_t *ev, ngx_int_t event, ngx_uint_t flags)
     }
 
     c = ev->data;
+#if (NGX_AS_LIB)
+    if (c->fd == NGX_DUMMY_FD) {
+        return NGX_OK;
+    }
+#endif
 
     if (event == NGX_READ_EVENT) {
         e = c->write;
@@ -701,6 +711,12 @@ ngx_epoll_del_event(ngx_event_t *ev, ngx_int_t event, ngx_uint_t flags)
 static ngx_int_t
 ngx_epoll_add_connection(ngx_connection_t *c)
 {
+#if (NGX_AS_LIB)
+    if (c->fd == NGX_DUMMY_FD) {
+        return NGX_OK;
+    }
+#endif
+
     struct epoll_event  ee;
 
     ee.events = EPOLLIN|EPOLLOUT|EPOLLET|EPOLLRDHUP;
@@ -725,6 +741,12 @@ ngx_epoll_add_connection(ngx_connection_t *c)
 static ngx_int_t
 ngx_epoll_del_connection(ngx_connection_t *c, ngx_uint_t flags)
 {
+#if (NGX_AS_LIB)
+    if (c->fd == NGX_DUMMY_FD) {
+        return NGX_OK;
+    }
+#endif
+
     int                 op;
     struct epoll_event  ee;
 

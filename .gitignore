@@ -6,3 +6,5 @@
 /objs
 /Makefile
 /sample/sample
+.vscode
+*.o

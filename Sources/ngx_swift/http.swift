@@ -13,6 +13,13 @@ public enum Http {
 
     static let handler: ngx_http_handler_pt = { r in
         let api = App.dummyApi.pointee.get_api_from_req(r)!
+        let locId = api.pointee.get_loc_id_from_req(r)
+        let ud = Unmanaged<ContextData>.fromOpaque(api.pointee.get_upcall()!.pointee.ud).takeUnretainedValue()
+        if ud.app.httpServerHandler[locId] == nil {
+            api.pointee.log(UInt(NGX_LOG_DEBUG), "unable to find handler related to the location \(locId)")
+            return Int(NGX_DECLINED)
+        }
+
         let err = api.pointee.http_read_client_request_body(r, bodyhandler)
         if err >= NGX_HTTP_SPECIAL_RESPONSE {
             return err
@@ -32,50 +39,58 @@ public enum Http {
         }
 
         var req = HttpRequest(api: api, contextData: ud, req: r!)
-        let err: Int
+        let result: HttpResult
         do {
-            err = try handler(req)
+            result = try handler(req)
         } catch {
-            req.log(.ERR, "failed to handle the request: \(error)")
+            req.api.log(.ERR, "failed to handle the request: \(error)")
             api.pointee.http_finalize_request(r, 500)
             return
         }
-        if err == NGX_AGAIN {
+        let code: Int
+        switch result {
+        case .ASYNC:
             return
+        case let .STATUS(c):
+            code = c
+        case .OK:
+            code = Int(NGX_OK)
         }
-        api.pointee.http_finalize_request(r, err)
+        api.pointee.http_finalize_request(r, code)
     }
 }
 
 public class HttpRequest: @unchecked Sendable {
-    private let api: UnsafePointer<ngx_as_lib_api_t>
+    let _api: UnsafePointer<ngx_as_lib_api_t>
+    public var api: Api { Api(_api) }
     private var headersSent = false
     private let contextData: ContextData
-    public var data: AnyObject? { contextData.data }
     public let req: UnsafeMutablePointer<ngx_http_request_t>
 
     init(api: UnsafePointer<ngx_as_lib_api_t>, contextData: ContextData, req: UnsafeMutablePointer<ngx_http_request_t>) {
-        self.api = api
+        _api = api
         self.contextData = contextData
         self.req = req
     }
 
-    public func log(_ level: NgxLogLevel, _ message: String) {
-        api.pointee.log(UInt(level.rawValue), message)
-    }
-
-    public func executeOnWorker(_ f: @escaping () -> Int) {
+    public func executeOnWorker(_ f: @escaping () -> HttpResult) {
         let ok = contextData.queue.push(Runnable {
             let ret = f()
-            if ret == NGX_AGAIN {
+            let code: Int
+            switch ret {
+            case .ASYNC:
                 return
+            case let .STATUS(c):
+                code = c
+            case .OK:
+                code = Int(NGX_OK)
             }
-            self.api.pointee.http_finalize_request(self.req, ret)
+            self._api.pointee.http_finalize_request(self.req, code)
         })
         if !ok {
             contextData.enqueueFailedCount.wrappingIncrement(ordering: .relaxed)
         }
-        api.pointee.notify()
+        _api.pointee.notify()
     }
 
     public var method: HttpMethod {
@@ -134,9 +149,22 @@ public class HttpRequest: @unchecked Sendable {
         return .UNKNOWN
     }
 
-    private static let emptyBody = [CChar]()
-    private var _body: [CChar]?
-    public var body: [CChar] {
+    private var _uri: String?
+    public var uri: String {
+        if let _uri {
+            return _uri
+        }
+        _uri = App.ngxstrToString(&req.pointee.unparsed_uri)
+        return _uri!
+    }
+
+    public var httpVer: UInt {
+        return req.pointee.http_version
+    }
+
+    static let emptyBody = Data()
+    private var _body: Data?
+    public var body: Data {
         if let _body {
             return _body
         }
@@ -150,56 +178,75 @@ public class HttpRequest: @unchecked Sendable {
             _body = Self.emptyBody
             return _body!
         }
-        var node: UnsafeMutablePointer<ngx_chain_t>? = chain
-        var cap = 0
-        while let n = node {
-            if let buf = n.pointee.buf {
-                if buf.pointee.pos == nil {
-                    log(.ERR, "req body is not in memory")
-                    _body = Self.emptyBody
-                    return _body!
-                }
-                let len = buf.pointee.last - buf.pointee.pos
-                cap += len
-            }
-            node = n.pointee.next
-        }
-        var copiedBody = [CChar](unsafeUninitializedCapacity: cap) { _, len in len = cap }
-        copiedBody.withUnsafeMutableBufferPointer { p in
-            var off = 0
-            var node: UnsafeMutablePointer<ngx_chain_t>? = chain
-            let base = p.baseAddress!
-            while let n = node {
-                if let buf = n.pointee.buf {
-                    let len = buf.pointee.last - buf.pointee.pos
-                    memcpy(base + off, buf.pointee.pos, len)
-                    off += len
-                }
-                node = n.pointee.next
-            }
-        }
-        _body = copiedBody
+        _body = App.makeDataFromChain(_api, chain)
         return _body!
     }
 
-    public func status(_ code: Int) {
-        req.pointee.headers_out.status = UInt(code)
+    private var _headers: [String: [String]]?
+
+    public func header(_ key: String) -> [String]? {
+        if _headers == nil {
+            foreachHeader { _, _ in }
+        }
+        return _headers![key]
     }
 
-    public func send(_ s: String, flush: Bool = false) throws {
+    public func foreachHeader(_ f: (String, String) throws -> Void) rethrows {
+        if let _headers {
+            for (k, v) in _headers {
+                for vv in v {
+                    try f(k, vv)
+                }
+            }
+            return
+        }
+        var __headers = [String: [String]]()
+        var part: UnsafeMutablePointer<ngx_list_part_t>? = withUnsafeMutablePointer(to: &req.pointee.headers_in.headers.part) { p in p }
+        while let p = part {
+            for i in 0 ..< Int(p.pointee.nelts) {
+                let h: UnsafeMutablePointer<ngx_table_elt_t> = p.pointee.elts.advanced(by: i * MemoryLayout<ngx_table_elt_t>.stride)
+                    .assumingMemoryBound(to: ngx_table_elt_t.self)
+                let k = App.ngxstrToString(&h.pointee.key)
+                let v = App.ngxstrToString(&h.pointee.value)
+                try f(k, v)
+                if __headers.keys.contains(k) {
+                    __headers[k]!.append(v)
+                } else {
+                    __headers[k] = [v]
+                }
+            }
+            part = p.pointee.next
+        }
+        _headers = __headers
+    }
+
+    public func header(key: String, value: String) throws -> HttpRequest {
+        let err = _api.pointee.add_http_header(req, &req.pointee.headers_out.headers, key, value)
+        if err != NGX_OK {
+            throw Exception("failed to set header \(key): \(value)")
+        }
+        return self
+    }
+
+    public func status(_ code: Int) -> HttpRequest {
+        req.pointee.headers_out.status = UInt(code)
+        return self
+    }
+
+    public func send(_ s: String, flush: Bool = false) throws -> HttpRequest {
         return try send(s, len: s.utf8CString.count - 1, flush: flush)
     }
 
-    public func send(_ bytes: [CChar], flush: Bool = false) throws {
+    public func send(_ bytes: [CChar], flush: Bool = false) throws -> HttpRequest {
         return try send(bytes, len: bytes.count, flush: flush)
     }
 
-    public func send(_ bytes: UnsafeRawPointer, len: Int, noCopy: Bool = false, flush: Bool = false) throws {
+    public func send(_ bytes: UnsafeRawPointer, len: Int, noCopy: Bool = false, flush: Bool = false) throws -> HttpRequest {
         if len <= 0 {
             throw Exception("the length must be greater than 0 when calling send(...)")
         }
         if !headersSent {
-            let err = api.pointee.http_send_header(req)
+            let err = _api.pointee.http_send_header(req)
             if err != 0 {
                 throw Exception("send header failed: \(err)")
             }
@@ -210,7 +257,7 @@ public class HttpRequest: @unchecked Sendable {
         if noCopy {
             data = UnsafeMutableRawPointer(mutating: bytes)
         } else {
-            let xdata = api.pointee.pcalloc(req.pointee.pool, len)
+            let xdata = _api.pointee.pcalloc(req.pointee.pool, len)
             guard let xdata else {
                 throw Exception("unable to allocate memory for the bytes to send: (\(len))")
             }
@@ -218,7 +265,7 @@ public class HttpRequest: @unchecked Sendable {
             data = xdata
         }
 
-        let bufraw = api.pointee.pcalloc(req.pointee.pool, MemoryLayout<ngx_buf_t>.stride)
+        let bufraw = _api.pointee.pcalloc(req.pointee.pool, MemoryLayout<ngx_buf_t>.stride)
         guard let bufraw else {
             throw Exception("unable to allocate memory for buf")
         }
@@ -234,47 +281,48 @@ public class HttpRequest: @unchecked Sendable {
             buf.pointee.flags |= UInt32(NGX_BUF_flush)
         }
 
-        let err = api.pointee.http_buf_output_filter(req, buf)
+        let err = _api.pointee.http_buf_output_filter(req, buf)
         if err != 0 {
             throw Exception("output filter failed: \(err)")
         }
+        return self
     }
 
-    public func end() throws -> Int {
+    public func end() throws -> HttpResult {
         return try end(nil, len: 0)
     }
 
-    public func end(_ s: String) throws -> Int {
+    public func end(_ s: String) throws -> HttpResult {
         return try end(s, len: s.utf8CString.count - 1)
     }
 
-    public func end(_ bytes: [CChar]) throws -> Int {
-        return try end(bytes, len: bytes.count)
+    public func end(_ bytes: Data) throws -> HttpResult {
+        return try bytes.withUnsafeBytes { p in try end(p.baseAddress!, len: bytes.count) }
     }
 
-    public func end(_ bytes: UnsafeRawPointer?, len: Int, noCopy: Bool = false) throws -> Int {
+    public func end(_ bytes: UnsafeRawPointer?, len: Int, noCopy: Bool = false) throws -> HttpResult {
         if !headersSent {
             req.pointee.headers_out.content_length_n = Int64(len)
             if len == 0 {
                 req.pointee.header_only = true
             }
-            let err = api.pointee.http_send_header(req)
+            let err = _api.pointee.http_send_header(req)
             if err != 0 {
                 throw Exception("send header failed: \(err)")
             }
             headersSent = true
             if len == 0 {
-                return 0
+                return .OK
             }
         } else {
             if len == 0 {
                 let buf = withUnsafeMutablePointer(to: &req.pointee.appbuf) { p in p }
                 buf.pointee.flags |= UInt32(NGX_BUF_last_buf)
-                let err = api.pointee.http_buf_output_filter(req, buf)
+                let err = _api.pointee.http_buf_output_filter(req, buf)
                 if err != 0 {
                     throw Exception("output filter for last buf failed: \(err)")
                 }
-                return 0
+                return .OK
             }
         }
 
@@ -286,7 +334,7 @@ public class HttpRequest: @unchecked Sendable {
         if noCopy {
             data = UnsafeMutableRawPointer(mutating: bytes)
         } else {
-            let xdata = api.pointee.pcalloc(req.pointee.pool, len)
+            let xdata = _api.pointee.pcalloc(req.pointee.pool, len)
             guard let xdata else {
                 throw Exception("unable to allocate memory for the bytes to send: (\(len))")
             }
@@ -304,11 +352,110 @@ public class HttpRequest: @unchecked Sendable {
         }
         buf.pointee.flags |= UInt32(NGX_BUF_last_buf)
 
-        let err = api.pointee.http_buf_output_filter(req, buf)
+        let err = _api.pointee.http_buf_output_filter(req, buf)
         if err != 0 {
             throw Exception("output filter failed: \(err)")
         }
-        return 0
+        return .OK
+    }
+
+    public func sendRequest(main: HttpRequest? = nil, target: SockAddr? = nil, method: HttpMethod, uri: String, args: String? = nil,
+                            headers: [String: String]? = nil, body: String,
+                            callback: @escaping (inout HttpSubRequest, Int) throws -> HttpResult) throws
+    {
+        return try sendRequest(main: main, target: target, method: method, uri: uri, args: args, headers: headers, body: body, bodyLen: body.utf8CString.count - 1, callback: callback)
+    }
+
+    public func sendRequest(main: HttpRequest? = nil, target: SockAddr? = nil, method: HttpMethod, uri: String, args: String? = nil,
+                            headers: [String: String]? = nil, body: [CChar],
+                            callback: @escaping (inout HttpSubRequest, Int) throws -> HttpResult) throws
+    {
+        return try sendRequest(main: main, target: target, method: method, uri: uri, args: args, headers: headers, body: body, bodyLen: body.count, callback: callback)
+    }
+
+    public func sendRequest(main: HttpRequest? = nil, target: SockAddr? = nil, method: HttpMethod, uri: String, args: String? = nil,
+                            headers: [String: String]? = nil, body: UnsafeRawPointer? = nil, bodyLen: Int = 0, copyBody: Bool = true,
+                            callback: @escaping (inout HttpSubRequest, Int) throws -> HttpResult) throws
+    {
+        let cb = _api.pointee.pcalloc(req.pointee.pool, MemoryLayout<ngx_http_post_subrequest_t>.stride)?.assumingMemoryBound(to: ngx_http_post_subrequest_t.self)
+        guard let cb else {
+            throw Exception("unable to allocate callback object")
+        }
+        let subreq = SubReq(api: _api, contextData: contextData, main: main, parent: self, target: target, headers: headers, callback: callback)
+
+        var buf: UnsafeMutablePointer<ngx_buf_t>?
+        if let body {
+            let buf0 = _api.pointee.pcalloc(req.pointee.pool, MemoryLayout<ngx_buf_t>.stride + bodyLen)?.assumingMemoryBound(to: ngx_buf_t.self)
+            guard let buf0 else {
+                throw Exception("unable to allocate body buf")
+            }
+            if copyBody {
+                let data = UnsafeMutableRawPointer(mutating: buf0).advanced(by: MemoryLayout<ngx_buf_t>.stride)
+                memcpy(data, body, bodyLen)
+                buf0.pointee.pos = data
+                buf0.pointee.last = data.advanced(by: bodyLen)
+                buf0.pointee.flags |= UInt32(NGX_BUF_temporary)
+            } else {
+                buf0.pointee.pos = UnsafeMutableRawPointer(mutating: body)
+                buf0.pointee.last = buf0.pointee.pos!.advanced(by: bodyLen)
+                buf0.pointee.flags |= UInt32(NGX_BUF_memory)
+            }
+            buf = buf0
+        }
+
+        let un = Unmanaged.passRetained(subreq)
+        cb.pointee.data = un.toOpaque()
+        cb.pointee.handler = SubReq.subreqPostHandler
+
+        var initCB = ngx_http_init_subrequest_t()
+        initCB.handler = SubReq.subreqInitHandler
+        initCB.data = cb.pointee.data
+
+        let err = uri.utf8CString.withUnsafeBufferPointer { _uri in
+            if let args {
+                args.utf8CString.withUnsafeBufferPointer { _args in
+                    _api.pointee.http_subrequest(req, Int(method.rawValue),
+                                                 UnsafeMutablePointer(mutating: _uri.baseAddress!),
+                                                 UnsafeMutablePointer(mutating: _args.baseAddress!),
+                                                 buf, &initCB, cb)
+                }
+            } else {
+                _api.pointee.http_subrequest(req, Int(method.rawValue),
+                                             UnsafeMutablePointer(mutating: _uri.baseAddress!),
+                                             nil, // args
+                                             buf, &initCB, cb)
+            }
+        }
+        if err != NGX_OK {
+            un.release()
+            throw Exception("failed to initialize subrequest")
+        }
+    }
+
+    public var subreqTarget: SockAddr? {
+        let o = getAndReleaseRequestData()
+        guard let o else {
+            return nil
+        }
+        return (o as! SubReqTarget).target
+    }
+
+    private func getAndReleaseRequestData() -> AnyObject? {
+        guard let ptr = req.pointee.data else {
+            return nil
+        }
+        req.pointee.data = nil
+        return Unmanaged<AnyObject>.fromOpaque(ptr).takeRetainedValue()
+    }
+}
+
+public class DummyHttpRequest: HttpRequest, @unchecked Sendable {
+    override init(api: UnsafePointer<ngx_as_lib_api_t>, contextData: ContextData, req: UnsafeMutablePointer<ngx_http_request_t>) {
+        super.init(api: api, contextData: contextData, req: req)
+    }
+
+    public func runPostedRequests() {
+        _api.pointee.http_run_posted_requests(req.pointee.connection)
     }
 }
 
@@ -330,4 +477,107 @@ public enum HttpMethod: UInt {
     case PATCH = 0x4000
     case TRACE = 0x8000
     case CONNECT = 0x10000
+}
+
+class SubReq {
+    private let api: UnsafePointer<ngx_as_lib_api_t>
+    private let contextData: ContextData
+    private let main: HttpRequest?
+    private let parent: HttpRequest
+    private let target: SockAddr?
+    private let headers: [String: String]?
+    private let callback: (inout HttpSubRequest, Int) throws -> HttpResult
+    init(api: UnsafePointer<ngx_as_lib_api_t>, contextData: ContextData,
+         main: HttpRequest?, parent: HttpRequest,
+         target: SockAddr?, headers: [String: String]?,
+         callback: @escaping (inout HttpSubRequest, Int) throws -> HttpResult)
+    {
+        self.api = api
+        self.contextData = contextData
+        self.main = main
+        self.parent = parent
+        self.target = target
+        self.headers = headers
+        self.callback = callback
+    }
+
+    static let subreqInitHandler: ngx_http_init_subrequest_pt = { req, data in
+        let subreq = Unmanaged<SubReq>.fromOpaque(data!).takeUnretainedValue() // it's still used by the post handler, so `unretained`
+        if subreq.target != nil {
+            req!.pointee.data = Unmanaged.passRetained(SubReqTarget(target: subreq.target)).toOpaque()
+        }
+        if let headers = subreq.headers {
+            for (k, v) in headers {
+                let err = subreq.api.pointee.add_http_header(req, &req!.pointee.headers_in.headers, k, v)
+                if err != 0 {
+                    return err
+                }
+            }
+        }
+        return 0
+    }
+
+    static let subreqPostHandler: ngx_http_post_subrequest_pt = { r, data, status in
+        let subreq = Unmanaged<SubReq>.fromOpaque(data!).takeRetainedValue()
+        let req = HttpRequest(api: subreq.api, contextData: subreq.contextData, req: r!)
+        var httpsubreq = HttpSubRequest(ptr: r!, req: req)
+        do {
+            let ret = try subreq.callback(&httpsubreq, status)
+            let code: Int
+            switch ret {
+            case .ASYNC:
+                if r!.pointee.main.pointee.is_dummy {
+                    // always release the dummy req
+                    subreq.api.pointee.http_finalize_request(r!.pointee.main, 0)
+                }
+                return 0
+            case let .STATUS(c):
+                code = c
+            case .OK:
+                code = Int(NGX_OK)
+            }
+            subreq.api.pointee.http_finalize_request(r!.pointee.main, code)
+            if let main = subreq.main, main.req != r!.pointee.main {
+                subreq.api.pointee.http_finalize_request(main.req, code)
+            }
+        } catch {
+            subreq.api.pointee.http_finalize_request(r!.pointee.main, 500)
+            if let main = subreq.main, main.req != r!.pointee.main {
+                subreq.api.pointee.http_finalize_request(main.req, 500)
+            }
+        }
+        return 0
+    }
+}
+
+public struct HttpSubRequest {
+    public let ptr: UnsafeMutablePointer<ngx_http_request_t>
+    public let req: HttpRequest
+
+    private var _body: Data?
+    public var body: Data {
+        mutating get {
+            if let _body {
+                return _body
+            }
+            guard let chain = ptr.pointee.out else {
+                _body = HttpRequest.emptyBody
+                return _body!
+            }
+            _body = App.makeDataFromChain(req._api, chain)
+            return _body!
+        }
+    }
+
+    init(ptr: UnsafeMutablePointer<ngx_http_request_t>, req: HttpRequest) {
+        self.ptr = ptr
+        self.req = req
+    }
+}
+
+class SubReqTarget {
+    let target: SockAddr?
+    init(target: SockAddr?) {
+        self.target = target
+    }
 }

@@ -1180,6 +1180,9 @@ ngx_get_connection(ngx_socket_t s, ngx_log_t *log)
 
     /* disable warning: Win32 SOCKET is u_int while UNIX socket is int */
 
+#if (NGX_AS_LIB)
+    if (s != NGX_DUMMY_FD) {
+#endif
     if (ngx_cycle->files && (ngx_uint_t) s >= ngx_cycle->files_n) {
         ngx_log_error(NGX_LOG_ALERT, log, 0,
                       "the new socket has number %d, "
@@ -1187,6 +1190,9 @@ ngx_get_connection(ngx_socket_t s, ngx_log_t *log)
                       s, ngx_cycle->files_n);
         return NULL;
     }
+#if (NGX_AS_LIB)
+    }
+#endif
 
     ngx_drain_connections((ngx_cycle_t *) ngx_cycle);
 
@@ -1203,9 +1209,15 @@ ngx_get_connection(ngx_socket_t s, ngx_log_t *log)
     ngx_cycle->free_connections = c->data;
     ngx_cycle->free_connection_n--;
 
+#if (NGX_AS_LIB)
+    if (s != NGX_DUMMY_FD) {
+#endif
     if (ngx_cycle->files && ngx_cycle->files[s] == NULL) {
         ngx_cycle->files[s] = c;
     }
+#if (NGX_AS_LIB)
+    }
+#endif
 
     rev = c->read;
     wev = c->write;
@@ -1244,9 +1256,15 @@ ngx_free_connection(ngx_connection_t *c)
     ngx_cycle->free_connections = c;
     ngx_cycle->free_connection_n++;
 
+#if (NGX_AS_LIB)
+    if (c->fd != NGX_DUMMY_FD) {
+#endif
     if (ngx_cycle->files && ngx_cycle->files[c->fd] == c) {
         ngx_cycle->files[c->fd] = NULL;
     }
+#if (NGX_AS_LIB)
+    }
+#endif
 }
 
 

@@ -7,11 +7,15 @@ import Atomics
 import Foundation
 import libnginx
 import WaitfreeMpscQueueSwift
+#if os(Linux)
+import LinuxSOMemfd
+#endif
 
 public class App {
     private var libnginxPath: String
     public var threads: [AppThreadConf]?
-    var httpServerHandler = [Int64: (HttpRequest) throws -> Int]()
+    var httpServerHandler = [Int64: (HttpRequest) throws -> HttpResult]()
+    var httpUpstreamHandler = [UInt: (HttpRequest) throws -> SockAddr?]()
 
     nonisolated(unsafe) static var _dummyApi: UnsafePointer<ngx_as_lib_api_t>?
     static var dummyApi: UnsafePointer<ngx_as_lib_api_t> { _dummyApi! }
@@ -20,8 +24,12 @@ public class App {
         libnginxPath = libpath
     }
 
-    public func addHttpServerHandler(id: Int64, handler: @escaping (HttpRequest) throws -> Int) {
+    public func addHttpServerHandler(id: Int64, handler: @escaping (HttpRequest) throws -> HttpResult) {
         httpServerHandler[id] = handler
+    }
+
+    public func addHttpUpstreamHandler(id: UInt, handler: @escaping (HttpRequest) throws -> SockAddr?) {
+        httpUpstreamHandler[id] = handler
     }
 
     public func launch(conf: String) throws {
@@ -41,20 +49,40 @@ public class App {
             confs = [String](repeating: conf, count: 1)
         }
 
-        // prepare pthread
+// prepare pthread
+#if canImport(Darwin)
         let pthreads = UnsafeMutablePointer<pthread_t?>.allocate(capacity: threadCount)
+#else
+        let pthreads = UnsafeMutablePointer<pthread_t>.allocate(capacity: threadCount)
+#endif
+
+#if os(Linux)
+        let data = try Data(contentsOf: URL(fileURLWithPath: libnginxPath))
+        var libnginxBytes = [UInt8](data)
+#endif
 
         // start
         for i in 0 ..< threadCount {
+#if !os(Linux)
             let tmplib = FileManager.default.temporaryDirectory.appendingPathComponent("libnginx\(i)").path
             do { try FileManager.default.removeItem(atPath: tmplib) } catch {}
             try FileManager.default.copyItem(atPath: libnginxPath, toPath: tmplib)
+#else
+            var ctmplib = [CChar](repeating: 0, count: 2048)
+            let memfd = ngx_helper_create_memfd_for_so(&libnginxBytes, UInt32(libnginxBytes.count), "libnginx\(i)", &ctmplib)
+            if memfd < 0 {
+                throw Exception("failed to create memfd for so \(i): errno: \(-memfd)")
+            }
+            let tmplib = String(utf8String: &ctmplib)!
+#endif
 
             let lib = dlopen(tmplib, RTLD_NOW | RTLD_LOCAL)
             guard let lib else {
                 throw Exception("failed to open library: \(tmplib)")
             }
+#if !os(Linux)
             try FileManager.default.removeItem(atPath: tmplib)
+#endif
 
             let libngxSym = dlsym(lib, LIBNGX)
             guard let libngxSym else {
@@ -74,6 +102,7 @@ public class App {
             upcall.initialize(to: ngx_as_lib_upcall_t())
             upcall.pointee.ud = contextPtr
             upcall.pointee.postconfiguration = Http.postconfiguration
+            upcall.pointee.get_upstream_peer = Upstream.getpeer
             upcall.pointee.looptick = Self.looptick
 
             api.pointee.set_upcall(upcall)
@@ -101,11 +130,15 @@ public class App {
 
         // wait for workers to exit
         for i in 0 ..< threadCount {
+#if canImport(Darwin)
             pthread_join(pthreads[i]!, nil)
+#else
+            pthread_join(pthreads[i], nil)
+#endif
         }
     }
 
-    static let looptick: @convention(c) (UnsafeMutablePointer<ngx_as_lib_api_t>?, UnsafeMutableRawPointer?) -> Void = { api, ud in
+    static let looptick: @convention(c) (UnsafeMutablePointer<ngx_as_lib_api_t>?, UnsafeMutableRawPointer?) -> Int64 = { api, ud in
         let contextData = Unmanaged<ContextData>.fromOpaque(ud!).takeUnretainedValue()
         let queue = contextData.queue
         while true {
@@ -119,6 +152,74 @@ public class App {
             api!.pointee.log(UInt(NGX_LOG_CRIT), "an async task was unable to be enqueued")
         }
         contextData.lastEnqueueFailedCount = failedCount
+        return -1
+    }
+
+    static func makeDataFromChain(_ api: UnsafePointer<ngx_as_lib_api_t>, _ chain: UnsafeMutablePointer<ngx_chain_t>) -> Data {
+        var node: UnsafeMutablePointer<ngx_chain_t>? = chain
+        var cap = 0
+        while let n = node {
+            if let buf = n.pointee.buf {
+                if buf.pointee.pos == nil {
+                    api.pointee.log(UInt(NGX_LOG_ERR), "body is not in memory")
+                    return HttpRequest.emptyBody
+                }
+                let len = buf.pointee.last - buf.pointee.pos
+                cap += len
+            }
+            node = n.pointee.next
+        }
+        var copiedBody = Data(capacity: cap)
+        copiedBody.count = cap
+        copiedBody.withUnsafeMutableBytes { p in
+            var off = 0
+            var node: UnsafeMutablePointer<ngx_chain_t>? = chain
+            let base = p.baseAddress!
+            while let n = node {
+                if let buf = n.pointee.buf {
+                    let len = buf.pointee.last - buf.pointee.pos
+                    memcpy(base + off, buf.pointee.pos, len)
+                    off += len
+                }
+                node = n.pointee.next
+            }
+        }
+        return copiedBody
+    }
+
+    static func ngxstrToString(_ s: UnsafePointer<ngx_str_t>) -> String {
+        var cchars = [CChar](unsafeUninitializedCapacity: s.pointee.len + 1) { _, l in l = s.pointee.len + 1 }
+        cchars[cchars.count - 1] = 0
+        memcpy(&cchars, s.pointee.data, s.pointee.len)
+        return String(cString: &cchars)
+    }
+}
+
+public struct Api {
+    @usableFromInline
+    let api: UnsafePointer<ngx_as_lib_api_t>
+    init(_ api: UnsafePointer<ngx_as_lib_api_t>) {
+        self.api = api
+    }
+
+    @inlinable @inline(__always)
+    public var workerData: AnyObject? {
+        let contextData = Unmanaged<ContextData>.fromOpaque(api.pointee.get_upcall()!.pointee.ud!).takeUnretainedValue()
+        return contextData.data
+    }
+
+    @inlinable @inline(__always)
+    public func log(_ level: NgxLogLevel, _ message: String) {
+        api.pointee.log(UInt(level.rawValue), message)
+    }
+
+    public func newDummyHttpRequest(serverId: Int) throws -> DummyHttpRequest {
+        let r = api.pointee.new_http_dummy_request(serverId)
+        guard let r else {
+            throw Exception("failed to allocate dummy http request")
+        }
+        let ctx = Unmanaged<ContextData>.fromOpaque(api.pointee.get_upcall()!.pointee.ud).takeUnretainedValue()
+        return DummyHttpRequest(api: api, contextData: ctx, req: r)
     }
 }
 
@@ -129,11 +230,13 @@ class Runnable {
     }
 }
 
+@usableFromInline
 class ContextData {
     let app: App
     let queue: WaitfreeMpscQueue<Runnable>
     let enqueueFailedCount = ManagedAtomic<UInt64>(0)
     var lastEnqueueFailedCount: UInt64 = 0
+    @usableFromInline
     let data: AnyObject?
 
     init(app: App, queue: WaitfreeMpscQueue<Runnable>, data: AnyObject?) {
@@ -171,4 +274,8 @@ public enum NgxLogLevel: Int32 {
     case DEBUG = 8
 }
 
-public let ASYNC: Int = .init(NGX_AGAIN)
+public enum HttpResult {
+    case ASYNC
+    case STATUS(_ code: Int)
+    case OK
+}

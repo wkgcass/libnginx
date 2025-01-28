@@ -1,0 +1,4 @@
+module LinuxSOMemfd {
+    header "../linux_so_memfd.h"
+    export *
+}
