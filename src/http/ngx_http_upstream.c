@@ -1374,7 +1374,7 @@ ngx_http_upstream_check_broken_connection(ngx_http_request_t *r,
 
 #endif
 
-#if (NGX_HAVE_KQUEUE)
+#if (NGX_HAVE_KQUEUE) || (NGX_HAVE_FSTACK)
 
     if (ngx_event_flags & NGX_USE_KQUEUE_EVENT) {
 
@@ -2765,7 +2765,7 @@ ngx_http_upstream_test_connect(ngx_connection_t *c)
     int        err;
     socklen_t  len;
 
-#if (NGX_HAVE_KQUEUE)
+#if (NGX_HAVE_KQUEUE) || (NGX_HAVE_FSTACK)
 
     if (ngx_event_flags & NGX_USE_KQUEUE_EVENT)  {
         if (c->write->pending_eof || c->read->pending_eof) {
