@@ -42,6 +42,10 @@ void ngx_single_process_cycle(ngx_cycle_t *cycle);
 #define                NGX_FF_PROCESS_PRIMARY      1
 #define                NGX_FF_PROCESS_SECONDARY    2
 extern ngx_int_t       ngx_ff_process;
+#if (NGX_AS_LIB)
+extern ngx_int_t       ngx_as_lib_ngx_ff_process;
+extern int             ngx_as_lib_ngx_worker_id;
+#endif
 #endif
 
 extern ngx_uint_t      ngx_process;

@@ -208,18 +208,32 @@ static void ngx_as_lib_log(uintptr_t level, const char* content) {
 }
 
 static void _ngx_notify(void) {
-    ngx_notify(NULL);
+    // do nothing
 }
 
 struct ngx_as_lib_main_args {
     int    argc;
     char** argv;
+    bool   is_primary;
+    int    worker_id;
 };
 
 extern int ngx_lib_main(int, char**);
 
+static int ngx_as_lib_main(int argc, char** argv) {
+    ngx_as_lib_ngx_ff_process = NGX_FF_PROCESS_PRIMARY;
+    ngx_as_lib_ngx_worker_id = 0;
+    return ngx_lib_main(argc, argv);
+}
+
 static void* ngx_as_lib_main_thread(void* arg) {
     struct ngx_as_lib_main_args* args = arg;
+    if (args->is_primary) {
+        ngx_as_lib_ngx_ff_process = NGX_FF_PROCESS_PRIMARY;
+    } else {
+        ngx_as_lib_ngx_ff_process = NGX_FF_PROCESS_SECONDARY;
+    }
+    ngx_as_lib_ngx_worker_id = args->worker_id;
     int ret = ngx_lib_main(args->argc, args->argv);
     for (int i = 0; i < args->argc; ++i) {
         free(args->argv[i]);
@@ -234,11 +248,20 @@ static void* ngx_as_lib_main_thread(void* arg) {
     return retptr;
 }
 
-static int ngx_as_lib_main_new_thread(pthread_t* t, int argc, char** argv) {
+static int ngx_as_lib_main_thread_for_ff(void* arg) {
+    int32_t* p = ngx_as_lib_main_thread(arg);
+    int32_t v = *p;
+    free(p);
+    return v;
+}
+
+static int ngx_as_lib_main_new_thread(pthread_t* t, ngx_as_lib_api_t* main_api, int argc, char** argv, bool is_primary, uint32_t cid, uint32_t worker_id) {
     struct ngx_as_lib_main_args* args = malloc(sizeof(struct ngx_as_lib_main_args));
     if (!args) {
         return NGX_ERROR;
     }
+    args->is_primary = is_primary;
+    args->worker_id = worker_id;
     args->argv = malloc(sizeof(char*) * argc);
     if (!args->argv) {
         free(args);
@@ -257,9 +280,13 @@ static int ngx_as_lib_main_new_thread(pthread_t* t, int argc, char** argv) {
     }
 
     memset(t, 0, sizeof(pthread_t));
-    int err = pthread_create(t, NULL, ngx_as_lib_main_thread, args);
-    if (err) {
-        goto errout;
+    if (is_primary) {
+        int err = pthread_create(t, NULL, ngx_as_lib_main_thread, args);
+        if (err) {
+            goto errout;
+        }
+    } else {
+        main_api->ff_reg_worker_job(cid, ngx_as_lib_main_thread_for_ff, args);
     }
     return NGX_OK;
 errout:
@@ -294,8 +321,9 @@ ngx_as_lib_api_t api = {
     .http_run_posted_requests=ngx_http_run_posted_requests,
     .http_subrequest        = _ngx_http_subrequest,
 
-    .main = ngx_lib_main,
+    .main = ngx_as_lib_main,
     .main_new_thread = ngx_as_lib_main_new_thread,
+    .ff_reg_worker_job = ff_reg_worker_job,
 };
 
 ngx_as_lib_api_t* libngx(void) {

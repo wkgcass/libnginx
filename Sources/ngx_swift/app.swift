@@ -36,18 +36,7 @@ public class App {
         let threadCount = if let threads {
             threads.count
         } else { 1 }
-        let confs: [String]
-        if let threads {
-            var c = [String](repeating: conf, count: threadCount)
-            for i in 0 ..< threadCount {
-                if let affinity = threads[i].workerCpuAffinity {
-                    c[i] = "worker_cpu_affinity \(affinity);\n\(c[i])"
-                }
-            }
-            confs = c
-        } else {
-            confs = [String](repeating: conf, count: 1)
-        }
+        let confs = [String](repeating: conf, count: threadCount)
 
 // prepare pthread
 #if canImport(Darwin)
@@ -62,6 +51,7 @@ public class App {
 #endif
 
         // start
+        var apis = [UnsafeMutablePointer<ngx_as_lib_api_t>?](repeating: nil, count: threadCount)
         for i in 0 ..< threadCount {
 #if !os(Linux)
             let tmplib = FileManager.default.temporaryDirectory.appendingPathComponent("libnginx\(i)").path
@@ -89,9 +79,13 @@ public class App {
                 throw Exception("failed to get symbol: \"\(LIBNGX)\"")
             }
             let libngx = unsafeBitCast(libngxSym, to: libngx_entrypoint.self)
-            let api = UnsafePointer(libngx()!)
+            let api = UnsafeMutablePointer(libngx()!)
+            apis[i] = api
+        }
+        for i in (0 ..< threadCount).reversed() {
+            let api = apis[i]!
             if i == 0 {
-                Self._dummyApi = api
+                Self._dummyApi = UnsafePointer(api)
             }
             let userdata: AnyObject? = if let threads { threads[i].data } else { nil }
             let queue = WaitfreeMpscQueue<Runnable>()
@@ -118,7 +112,8 @@ public class App {
                         argv.pointee = UnsafeMutablePointer(mutating: arg0)
                         argv.advanced(by: 1).pointee = UnsafeMutablePointer(mutating: arg1)
                         argv.advanced(by: 2).pointee = UnsafeMutablePointer(mutating: arg2)
-                        return api.pointee.main_new_thread(&pthreads[i], Int32(argc), argv)
+                        let cid = if let threads, i < threads.count { threads[i].cid } else { UInt32(0) }
+                        return api.pointee.main_new_thread(&pthreads[i], apis[0], Int32(argc), argv, i == 0, cid, UInt32(i))
                     }
                 }
             }
@@ -128,14 +123,12 @@ public class App {
             }
         }
 
-        // wait for workers to exit
-        for i in 0 ..< threadCount {
+// wait for workers to exit
 #if canImport(Darwin)
-            pthread_join(pthreads[i]!, nil)
+        pthread_join(pthreads[0]!, nil)
 #else
-            pthread_join(pthreads[i], nil)
+        pthread_join(pthreads[0], nil)
 #endif
-        }
     }
 
     static let looptick: @convention(c) (UnsafeMutablePointer<ngx_as_lib_api_t>?, UnsafeMutableRawPointer?) -> Int64 = { api, ud in
@@ -247,10 +240,10 @@ class ContextData {
 }
 
 public struct AppThreadConf {
-    public var workerCpuAffinity: String?
+    public var cid: UInt32
     public var data: AnyObject?
-    public init(workerCpuAffinity: String? = nil, data: AnyObject? = nil) {
-        self.workerCpuAffinity = workerCpuAffinity
+    public init(cid: UInt32, data: AnyObject? = nil) {
+        self.cid = cid
         self.data = data
     }
 }

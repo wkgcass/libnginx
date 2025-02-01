@@ -30,7 +30,9 @@ if [ ! $(pkg-config --exists libdpdk && echo 1) ]; then
     exit 1
 fi
 
-CORE_LIBS="$CORE_LIBS \$(shell pkg-config --static --libs libdpdk)"
+DPDK_LIBS="\$(shell pkg-config --libs-only-L libdpdk) -Wl,--no-as-needed,--whole-archive -lrte_net_bond \$(shell pkg-config --libs-only-l libdpdk) -Wl,--as-needed,--no-whole-archive"
+
+CORE_LIBS="$CORE_LIBS $DPDK_LIBS"
 CORE_LIBS="$CORE_LIBS -L$FF_PATH/lib -Wl,--whole-archive,-lfstack,--no-whole-archive"
 CORE_LIBS="$CORE_LIBS -Wl,--no-whole-archive -lrt -lm -ldl -lcrypto -lpthread -lnuma"
 
@@ -713,7 +715,7 @@ done
 
 echo ".PHONY: sample" >> $NGX_MAKEFILE
 echo "sample:" >> $NGX_MAKEFILE
-echo "\t\$(CC) -o sample/sample -I./ngx_as_lib -L objs \\" >> $NGX_MAKEFILE
+echo "\t\$(CC) -o sample/sample -I./ngx_as_lib -L objs $DPDK_LIBS \\" >> $NGX_MAKEFILE
 if [ $NGX_SYSTEM != Darwin ]; then
 echo "\t\t-Wl,--no-as-needed \\" >> $NGX_MAKEFILE
 fi

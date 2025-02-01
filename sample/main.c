@@ -116,10 +116,10 @@ intptr_t sample_get_upstream_peer(ngx_as_lib_api_t* api, void* ud, ngx_http_requ
 }
 
 int64_t sample_looptick(ngx_as_lib_api_t* api, void* _ud) {
-    struct sample_data* ud = _ud;
-    char log[256];
-    sprintf(log, "loop tick triggered, data=%s", ud->data);
-    api->log(NGX_LOG_INFO, log);
+    // struct sample_data* ud = _ud;
+    // char log[256];
+    // sprintf(log, "loop tick triggered, data=%s", ud->data);
+    // api->log(NGX_LOG_INFO, log);
     return -1;
 }
 

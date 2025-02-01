@@ -18,14 +18,44 @@ struct NgxSwiftSample: ParsableCommand {
 #else
     @Option(help: "The path to libnginx shared library.") var lib: String = "objs/libnginx.so"
 #endif
-    @Option(help: "Thread count.") var threads: Int = 1
+    @Option(name: .customLong("fstack-address"), help: "F-Stack ip address") var fstackAddress: String = "::1"
+    @Option(name: .customShort("l"), help: "dpdk core list") var coreList: String
 
     func run() throws {
         let app = App(libpath: lib)
         app.threads = [AppThreadConf]()
         let global = GlobalData()
-        for _ in 0 ..< threads {
-            app.threads!.append(AppThreadConf(data: PercoreData(global: global)))
+
+        var cids = [Bool](repeating: false, count: 128)
+        let coreListSep = coreList.split(separator: ",")
+        for s in coreListSep {
+            let sep = String(s)
+            if sep.contains("-") {
+                let ss = sep.split(separator: "-")
+                if ss.count != 2 {
+                    throw ValidationError("invalid corelist \(sep)")
+                }
+                let from = Int(ss[0])
+                let to = Int(ss[1])
+                guard let from, let to, from < to else {
+                    throw ValidationError("invalid corelist \(sep)")
+                }
+                for i in from ... to {
+                    cids[i] = true
+                }
+            } else {
+                let c = Int(sep)
+                guard let c else {
+                    throw ValidationError("invalid corelist \(sep)")
+                }
+                cids[c] = true
+            }
+        }
+        for c in 0 ..< cids.count {
+            if !cids[c] {
+                continue
+            }
+            app.threads!.append(AppThreadConf(cid: UInt32(c), data: PercoreData(global: global)))
         }
 
         /* /sample */
@@ -87,7 +117,16 @@ struct NgxSwiftSample: ParsableCommand {
         /* /sub */
         app.addHttpServerHandler(id: 6) { req in
             let dummy = try req.api.newDummyHttpRequest(serverId: 1)
-            try dummy.sendRequest(main: req, target: SockAddr("[::1]:8899"),
+            var addr = fstackAddress
+            if addr.contains(":") {
+                if !addr.hasPrefix("[") {
+                    addr = "[\(addr)"
+                }
+                if !addr.hasSuffix("]") {
+                    addr = "\(addr)]"
+                }
+            }
+            try dummy.sendRequest(main: req, target: SockAddr("\(addr):8899"),
                                   method: .POST, uri: "/some_uri", headers: ["x-req-id": "\(Date())"],
                                   body: "body content")
             { sub, status in
@@ -121,8 +160,11 @@ struct NgxSwiftSample: ParsableCommand {
 
         try app.launch(conf: """
         error_log /dev/stdout debug;
+        fstack_conf /usr/local/nginx_fstack/conf/f-stack.conf;
         # error_log off;
-        events {}
+        events {
+            use kqueue;
+        }
         http {
             access_log /dev/stdout;
             # access_log off;
@@ -186,6 +228,7 @@ struct NgxSwiftSample: ParsableCommand {
             server {
                 server_id 1;
                 listen 0.0.0.0:65535 reuseport;
+                proxy_kernel_network_stack on;
                 location / {
                     proxy_set_header Connection "";
                     proxy_http_version 1.1;

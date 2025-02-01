@@ -5,6 +5,7 @@
 #include "ngx_http_config.h"
 #include <inttypes.h>
 #include <pthread.h>
+#include <ff_api.h>
 
 struct ngx_as_lib_api_s;
 typedef struct ngx_as_lib_api_s ngx_as_lib_api_t;
@@ -65,7 +66,8 @@ struct ngx_as_lib_api_s {
                                   ngx_http_post_subrequest_t* cb);
 
     int32_t (*main)(int32_t argc, char** argv);
-    int32_t (*main_new_thread)(pthread_t* t, int32_t argc, char** argv);
+    int32_t (*main_new_thread)(pthread_t* t, ngx_as_lib_api_t* main_api, int32_t argc, char** argv, bool is_primary, uint32_t cid, uint32_t worker_id);
+    void    (*ff_reg_worker_job)(uint32_t cid, loop_func_t f, void* arg);
 };
 
 typedef struct {

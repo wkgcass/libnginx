@@ -30,6 +30,10 @@ static void ngx_cache_loader_process_handler(ngx_event_t *ev);
 #if (NGX_HAVE_FSTACK)
 extern int ff_mod_init(const char *conf, int proc_id, int proc_type);
 ngx_int_t     ngx_ff_process;
+#if (NGX_AS_LIB)
+ngx_int_t     ngx_as_lib_ngx_ff_process;
+int           ngx_as_lib_ngx_worker_id;
+#endif
 #endif
 
 ngx_uint_t    ngx_process;
@@ -349,6 +353,7 @@ void
 ngx_single_process_cycle(ngx_cycle_t *cycle)
 {
     ngx_uint_t  i;
+    int         worker_id;
 
     if (ngx_set_environment(cycle, NULL) == NULL) {
         /* fatal */
@@ -364,9 +369,15 @@ ngx_single_process_cycle(ngx_cycle_t *cycle)
         exit(2);
     }
 
+#if (NGX_AS_LIB)
+    ngx_ff_process = ngx_as_lib_ngx_ff_process;
+    worker_id      = ngx_as_lib_ngx_worker_id;
+#else
     ngx_ff_process = NGX_FF_PROCESS_PRIMARY;
+    worker_id      = 0;
+#endif
 
-    if (ff_mod_init((const char *)ccf->fstack_conf.data, 0,
+    if (ff_mod_init((const char *)ccf->fstack_conf.data, worker_id,
             ngx_ff_process == NGX_FF_PROCESS_PRIMARY)) {
         ngx_log_error(NGX_LOG_ALERT, cycle->log, 0,
                         "ff_mod_init failed");
