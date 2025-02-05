@@ -390,8 +390,8 @@ struct ngx_http_request_s {
     uint32_t                          signature;         /* "HTTP" */
 
 #if (NGX_AS_LIB)
-    void*                             data; /* user data */
     bool                              is_dummy;
+    void*                             sockaddr_holder[5]; // 40 bytes holder
 #endif
 
     ngx_connection_t                 *connection;
