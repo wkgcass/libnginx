@@ -20,7 +20,7 @@ int ngx_helper_create_memfd_for_so(void* content, uint32_t content_len, const ch
         content_len -= n;
         content += n;
     }
-    sprintf(out_path, "/proc/self/fd/%d", fd);
+    sprintf(out_path, "/proc/%d/fd/%d", getpid(), fd);
     return fd;
 }
 #else
