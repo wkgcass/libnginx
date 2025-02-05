@@ -14,15 +14,15 @@ class Upstream {
             return Int(NGX_DECLINED)
         }
         let req = HttpRequest(api: api!, contextData: context, req: r!)
-        var addr: SockAddr?
+        var addr = SockAddr()
         do {
-            addr = try handler(req)
+            let ok = try handler(req, &addr)
+            if !ok {
+                req.api.log(.WARN, "no server provided for upstream \(id)")
+                return Int(NGX_DECLINED)
+            }
         } catch {
             req.api.log(.ERR, "failed to provide server for upstream \(id): \(error)")
-            return Int(NGX_DECLINED)
-        }
-        guard var addr else {
-            req.api.log(.WARN, "no server provided for upstream \(id)")
             return Int(NGX_DECLINED)
         }
         switch addr.type {
@@ -69,6 +69,14 @@ public struct SockAddr {
     public var portNetworkOrder: UInt16 // 2
     public var type: SockAddrType // 1
     // total <= 24
+
+    // only used internally
+    init() {
+        v6 = in6_addr()
+        v4 = in_addr()
+        portNetworkOrder = 0
+        type = .v4
+    }
 
     public init(_ v4: in_addr, _ port: UInt16) {
         type = .v4

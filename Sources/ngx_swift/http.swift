@@ -432,20 +432,19 @@ public class HttpRequest: @unchecked Sendable {
         }
     }
 
-    public var subreqTarget: SockAddr? {
-        let o = getAndReleaseRequestData()
-        guard let o else {
-            return nil
+    public func getSubreqTarget(_ sockaddr: inout SockAddr, default: SockAddr? = nil) -> Bool {
+        if req.pointee.sockaddr_holder.0 == nil && req.pointee.sockaddr_holder.1 == nil &&
+            req.pointee.sockaddr_holder.2 == nil && req.pointee.sockaddr_holder.3 == nil &&
+            req.pointee.sockaddr_holder.4 == nil
+        {
+            guard let d = `default` else {
+                return false
+            }
+            sockaddr = d
+        } else {
+            memcpy(&sockaddr, &req.pointee.sockaddr_holder, MemoryLayout<SockAddr>.stride)
         }
-        return (o as! SubReqTarget).target
-    }
-
-    private func getAndReleaseRequestData() -> AnyObject? {
-        guard let ptr = req.pointee.data else {
-            return nil
-        }
-        req.pointee.data = nil
-        return Unmanaged<AnyObject>.fromOpaque(ptr).takeRetainedValue()
+        return true
     }
 }
 
@@ -484,7 +483,7 @@ class SubReq {
     private let contextData: ContextData
     private let main: HttpRequest?
     private let parent: HttpRequest
-    private let target: SockAddr?
+    private var target: SockAddr? // var because memcpy need &target
     private let headers: [String: String]?
     private let callback: (inout HttpSubRequest, Int) throws -> HttpResult
     init(api: UnsafePointer<ngx_as_lib_api_t>, contextData: ContextData,
@@ -504,7 +503,7 @@ class SubReq {
     static let subreqInitHandler: ngx_http_init_subrequest_pt = { req, data in
         let subreq = Unmanaged<SubReq>.fromOpaque(data!).takeUnretainedValue() // it's still used by the post handler, so `unretained`
         if subreq.target != nil {
-            req!.pointee.data = Unmanaged.passRetained(SubReqTarget(target: subreq.target)).toOpaque()
+            memcpy(&req!.pointee.sockaddr_holder, &subreq.target, MemoryLayout<SockAddr>.stride)
         }
         if let headers = subreq.headers {
             for (k, v) in headers {
@@ -572,12 +571,5 @@ public struct HttpSubRequest {
     init(ptr: UnsafeMutablePointer<ngx_http_request_t>, req: HttpRequest) {
         self.ptr = ptr
         self.req = req
-    }
-}
-
-class SubReqTarget {
-    let target: SockAddr?
-    init(target: SockAddr?) {
-        self.target = target
     }
 }

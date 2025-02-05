@@ -117,7 +117,7 @@ struct NgxSwiftSample: ParsableCommand {
         }
 
         /* upstream */
-        app.addHttpUpstreamHandler(id: 1) { req in req.subreqTarget ?? SockAddr("[::1]:9900") }
+        app.addHttpUpstreamHandler(id: 1) { req, s in req.getSubreqTarget(&s, default: SockAddr("[::1]:9900")) }
 
         try app.launch(conf: """
         error_log /dev/stdout debug;
