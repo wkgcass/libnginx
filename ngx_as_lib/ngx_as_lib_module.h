@@ -350,8 +350,8 @@ typedef struct {
 struct ngx_http_request_s {
     uint32_t                          signature;         /* "HTTP" */
 
-    void*                             data; /* user data */
     bool                              is_dummy;
+    void*                             sockaddr_holder[5]; // 40 bytes holder
 
     ngx_connection_t*                 connection;
 

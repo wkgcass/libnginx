@@ -15,7 +15,7 @@ public class App {
     private var libnginxPath: String
     public var threads: [AppThreadConf]?
     var httpServerHandler = [Int64: (HttpRequest) throws -> HttpResult]()
-    var httpUpstreamHandler = [UInt: (HttpRequest) throws -> SockAddr?]()
+    var httpUpstreamHandler = [UInt: (HttpRequest, inout SockAddr) throws -> Bool]()
 
     nonisolated(unsafe) static var _dummyApi: UnsafePointer<ngx_as_lib_api_t>?
     static var dummyApi: UnsafePointer<ngx_as_lib_api_t> { _dummyApi! }
@@ -28,7 +28,7 @@ public class App {
         httpServerHandler[id] = handler
     }
 
-    public func addHttpUpstreamHandler(id: UInt, handler: @escaping (HttpRequest) throws -> SockAddr?) {
+    public func addHttpUpstreamHandler(id: UInt, handler: @escaping (HttpRequest, inout SockAddr) throws -> Bool) {
         httpUpstreamHandler[id] = handler
     }
 
